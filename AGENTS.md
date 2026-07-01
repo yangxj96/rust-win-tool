@@ -72,3 +72,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - Lib crates use `thiserror` for error types, `serde` for serialization
 - `windows_subsystem = "windows"` hides console in release builds
 - `app-service` depends on `base64` crate for `-EncodedCommand` encoding
+
+## Git Rules
+
+- 每次git提交的时候都需要包含新增和修改文件
