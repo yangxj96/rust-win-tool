@@ -547,6 +547,7 @@ impl App {
         use std::process::Command;
 
         let ps_script = r#"
+            [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
             $os = Get-CimInstance Win32_OperatingSystem
             $cpu = Get-CimInstance Win32_Processor
             $sys = Get-CimInstance Win32_ComputerSystem
