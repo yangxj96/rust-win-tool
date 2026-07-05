@@ -2,7 +2,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
+use ratatui::widgets::{Block, Borders, Tabs, Paragraph};
 use ratatui::Frame;
 use std::io;
 
@@ -149,48 +149,25 @@ fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
 }
 
 fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
-    let help = match app.current_view() {
-        View::Service => Line::from(vec![
-            Span::styled(" ←→", Style::default().fg(Color::Yellow)),
-            Span::raw(" 切换 "),
-            Span::styled("↑↓", Style::default().fg(Color::Yellow)),
-            Span::raw(" 选择 "),
-            Span::styled("a", Style::default().fg(Color::Yellow)),
-            Span::raw(" 添加 "),
-            Span::styled("d", Style::default().fg(Color::Yellow)),
-            Span::raw(" 删除 "),
-            Span::styled("s", Style::default().fg(Color::Yellow)),
-            Span::raw(" 启动 "),
-            Span::styled("p", Style::default().fg(Color::Yellow)),
-            Span::raw(" 停止 "),
-            Span::styled("r", Style::default().fg(Color::Yellow)),
-            Span::raw(" 刷新 "),
-            Span::styled("q", Style::default().fg(Color::Yellow)),
-            Span::raw(" 退出"),
-        ]),
-        View::Settings => Line::from(vec![
-            Span::styled(" ←→", Style::default().fg(Color::Yellow)),
-            Span::raw(" 切换 "),
-            Span::styled("↑↓", Style::default().fg(Color::Yellow)),
-            Span::raw(" 选择 "),
-            Span::styled("Enter", Style::default().fg(Color::Yellow)),
-            Span::raw(" 确认 "),
-            Span::styled("q", Style::default().fg(Color::Yellow)),
-            Span::raw(" 退出"),
-        ]),
-        View::Tools => Line::from(vec![
-            Span::styled(" ←→", Style::default().fg(Color::Yellow)),
-            Span::raw(" 切换 "),
-            Span::styled("↑↓", Style::default().fg(Color::Yellow)),
-            Span::raw(" 选择 "),
-            Span::styled("Enter", Style::default().fg(Color::Yellow)),
-            Span::raw(" 执行 "),
-            Span::styled("q", Style::default().fg(Color::Yellow)),
-            Span::raw(" 退出"),
-        ]),
-    };
-    let help_bar = Paragraph::new(help)
-        .style(Style::default().fg(Color::DarkGray))
-        .block(Block::default().borders(Borders::ALL));
-    frame.render_widget(help_bar, area);
+    let y = Style::default().fg(Color::Yellow);
+    let mut s: Vec<Span> = vec![
+        Span::styled(" ←→ 切换 ", y),
+        Span::styled("↑↓ 选择 ", y),
+    ];
+
+    match app.current_view() {
+        View::Service => {
+            s.push(Span::styled("a 添加 ", y));
+            s.push(Span::styled("d 删除 ", y));
+            s.push(Span::styled("s 启动 ", y));
+            s.push(Span::styled("p 停止 ", y));
+            s.push(Span::styled("r 刷新 ", y));
+        }
+        View::Settings | View::Tools => {
+            s.push(Span::styled("Enter 确认 ", y));
+        }
+    }
+    s.push(Span::styled("q 退出", y));
+
+    frame.render_widget(Paragraph::new(Line::from(s)), area);
 }
