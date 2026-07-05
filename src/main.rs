@@ -172,7 +172,17 @@ fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
 }
 
 fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
-    let inner_chunks = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
+    let main_chunks = Layout::horizontal([
+        Constraint::Min(0),    // 左侧：操作指引 + 状态消息
+        Constraint::Length(20), // 右侧：执行状态区
+    ])
+    .split(area);
+
+    let left_chunks = Layout::vertical([
+        Constraint::Min(0),    // 操作指引
+        Constraint::Length(1), // 状态消息
+    ])
+    .split(main_chunks[0]);
 
     // 操作指引
     let help = match app.current_view() {
@@ -217,8 +227,8 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
     };
     let help_bar = Paragraph::new(help)
         .style(Style::default().fg(Color::DarkGray))
-        .block(Block::default().borders(Borders::LEFT | Borders::RIGHT));
-    frame.render_widget(help_bar, inner_chunks[0]);
+        .block(Block::default().borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM));
+    frame.render_widget(help_bar, left_chunks[0]);
 
     // 状态消息
     let msg = app.status_message();
@@ -239,5 +249,47 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
     ]);
     let msg_bar = Paragraph::new(msg_line)
         .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM));
-    frame.render_widget(msg_bar, inner_chunks[1]);
+    frame.render_widget(msg_bar, left_chunks[1]);
+
+    // 右侧执行状态区
+    let status_area = main_chunks[1];
+    let (status_text, status_style) = if app.is_executing() {
+        (
+            format!(" ⏳ {}", app.executing_action()),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        let msg = app.status_message();
+        if msg.is_empty() {
+            (
+                " ✓ 就绪".to_string(),
+                Style::default().fg(Color::DarkGray),
+            )
+        } else {
+            match app.status_message_type() {
+                MsgType::Success => (
+                    format!(" ✓ 完成"),
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                ),
+                MsgType::Error => (
+                    format!(" ✗ 失败"),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                MsgType::Info => (
+                    format!(" ℹ {}", msg),
+                    Style::default().fg(Color::Yellow),
+                ),
+            }
+        }
+    };
+
+    let status_block = Paragraph::new(status_text)
+        .style(status_style)
+        .alignment(ratatui::layout::Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
+    frame.render_widget(status_block, status_area);
 }

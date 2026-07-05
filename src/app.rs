@@ -63,6 +63,9 @@ pub struct App {
     add_dialog_filtered: Vec<usize>,
     add_dialog_selected: usize,
     add_dialog_search: String,
+    // 执行状态
+    is_executing: bool,
+    executing_action: String,
 }
 
 impl App {
@@ -96,6 +99,8 @@ impl App {
             add_dialog_filtered: Vec::new(),
             add_dialog_selected: 0,
             add_dialog_search: String::new(),
+            is_executing: false,
+            executing_action: String::new(),
         }
     }
 
@@ -137,6 +142,7 @@ impl App {
     }
 
     pub fn refresh_statuses(&mut self) {
+        self.set_executing("刷新状态");
         self.set_status_message("正在刷新服务状态...".to_string(), MsgType::Info);
         let mut success_count = 0;
         let mut fail_count = 0;
@@ -152,6 +158,7 @@ impl App {
                 }
             }
         }
+        self.clear_executing();
         if fail_count == 0 {
             self.set_status_message(
                 format!("已刷新 {} 个服务状态", success_count),
@@ -189,6 +196,7 @@ impl App {
             if idx < self.managed_services.len() {
                 let name = self.managed_services[idx].name.clone();
                 let display_name = self.managed_services[idx].display_name.clone();
+                self.set_executing(&format!("启动 {}", display_name));
                 self.set_status_message(
                     format!("正在启动 \"{}\"...", display_name),
                     MsgType::Info,
@@ -197,14 +205,16 @@ impl App {
                     Ok(()) => {
                         let status = app_service::get_service_status(&name)
                             .unwrap_or_else(|_| "未知".to_string());
-                        self.service_statuses.insert(name.clone(), status);
-                        let current_status = self.service_statuses.get(&name).map(|s| s.as_str()).unwrap_or("未知");
+                        let current_status = Self::status_to_chinese(&status).to_string();
+                        self.service_statuses.insert(name, status);
+                        self.clear_executing();
                         self.set_status_message(
-                            format!("服务 \"{}\" 已启动，当前状态: {}", display_name, Self::status_to_chinese(current_status)),
+                            format!("服务 \"{}\" 已启动，当前状态: {}", display_name, current_status),
                             MsgType::Success,
                         );
                     }
                     Err(e) => {
+                        self.clear_executing();
                         self.set_status_message(
                             format!("启动 \"{}\" 失败: {}", display_name, e),
                             MsgType::Error,
@@ -222,6 +232,7 @@ impl App {
             if idx < self.managed_services.len() {
                 let name = self.managed_services[idx].name.clone();
                 let display_name = self.managed_services[idx].display_name.clone();
+                self.set_executing(&format!("停止 {}", display_name));
                 self.set_status_message(
                     format!("正在停止 \"{}\"...", display_name),
                     MsgType::Info,
@@ -230,14 +241,16 @@ impl App {
                     Ok(()) => {
                         let status = app_service::get_service_status(&name)
                             .unwrap_or_else(|_| "未知".to_string());
-                        self.service_statuses.insert(name.clone(), status);
-                        let current_status = self.service_statuses.get(&name).map(|s| s.as_str()).unwrap_or("未知");
+                        let current_status = Self::status_to_chinese(&status).to_string();
+                        self.service_statuses.insert(name, status);
+                        self.clear_executing();
                         self.set_status_message(
-                            format!("服务 \"{}\" 已停止，当前状态: {}", display_name, Self::status_to_chinese(current_status)),
+                            format!("服务 \"{}\" 已停止，当前状态: {}", display_name, current_status),
                             MsgType::Success,
                         );
                     }
                     Err(e) => {
+                        self.clear_executing();
                         self.set_status_message(
                             format!("停止 \"{}\" 失败: {}", display_name, e),
                             MsgType::Error,
@@ -457,6 +470,26 @@ impl App {
     pub fn set_status_message(&mut self, msg: String, msg_type: MsgType) {
         self.status_message = msg;
         self.status_message_type = msg_type;
+    }
+
+    // ========== 执行状态 ==========
+
+    pub fn is_executing(&self) -> bool {
+        self.is_executing
+    }
+
+    pub fn executing_action(&self) -> &str {
+        &self.executing_action
+    }
+
+    pub fn set_executing(&mut self, action: &str) {
+        self.is_executing = true;
+        self.executing_action = action.to_string();
+    }
+
+    pub fn clear_executing(&mut self) {
+        self.is_executing = false;
+        self.executing_action.clear();
     }
 
     // ========== 其他 ==========
