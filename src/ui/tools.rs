@@ -3,6 +3,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
 
@@ -120,12 +121,20 @@ fn render_sysinfo(frame: &mut Frame, area: Rect, app: &App) {
             (t.sysinfo_ram, info.ram.as_str()),
         ];
 
+        const LABEL_WIDTH: usize = 14;
+
         let lines: Vec<Line> = items
             .iter()
             .map(|(label, value)| {
+                let display_width = label.width();
+                let padding = if display_width < LABEL_WIDTH {
+                    " ".repeat(LABEL_WIDTH - display_width)
+                } else {
+                    String::new()
+                };
                 Line::from(vec![
                     Span::styled(
-                        format!("  {:<12}", label),
+                        format!("  {}{}", label, padding),
                         Style::default()
                             .fg(c.accent)
                             .add_modifier(Modifier::BOLD),

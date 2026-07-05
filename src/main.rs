@@ -211,6 +211,9 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
             s.push(Span::styled(format!("P {} ", t.hint_stop_all), y));
             s.push(Span::styled(format!("r {} ", t.hint_refresh), y));
         }
+        View::Tools if app.tool_detail_active() => {
+            s.push(Span::styled(format!("Esc {} ", t.hint_back), y));
+        }
         View::Settings | View::Tools | View::Scripts => {
             s.push(Span::styled(format!("Enter {} ", t.hint_confirm), y));
         }

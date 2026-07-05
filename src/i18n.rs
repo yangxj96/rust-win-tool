@@ -43,6 +43,7 @@ pub struct Translations {
     pub hint_stop_all: &'static str,
     pub hint_refresh: &'static str,
     pub hint_confirm: &'static str,
+    pub hint_back: &'static str,
     pub hint_quit: &'static str,
 
     // 服务视图
@@ -134,6 +135,7 @@ pub const ZH: Translations = Translations {
     hint_stop_all: "停止全部",
     hint_refresh: "刷新",
     hint_confirm: "确认",
+    hint_back: "返回",
     hint_quit: "退出",
 
     svc_header: "服务管理",
@@ -218,6 +220,7 @@ pub const EN: Translations = Translations {
     hint_stop_all: "Stop All",
     hint_refresh: "Refresh",
     hint_confirm: "Confirm",
+    hint_back: "Back",
     hint_quit: "Quit",
 
     svc_header: "Service Management",
