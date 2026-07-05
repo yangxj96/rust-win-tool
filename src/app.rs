@@ -137,12 +137,32 @@ impl App {
     }
 
     pub fn refresh_statuses(&mut self) {
+        self.set_status_message("正在刷新服务状态...".to_string(), MsgType::Info);
+        let mut success_count = 0;
+        let mut fail_count = 0;
         for svc in &self.managed_services {
-            let status = app_service::get_service_status(&svc.name)
-                .unwrap_or_else(|_| "未知".to_string());
-            self.service_statuses.insert(svc.name.clone(), status);
+            match app_service::get_service_status(&svc.name) {
+                Ok(status) => {
+                    self.service_statuses.insert(svc.name.clone(), status);
+                    success_count += 1;
+                }
+                Err(_) => {
+                    self.service_statuses.insert(svc.name.clone(), "未知".to_string());
+                    fail_count += 1;
+                }
+            }
         }
-        self.set_status_message("服务状态已刷新".to_string(), MsgType::Success);
+        if fail_count == 0 {
+            self.set_status_message(
+                format!("已刷新 {} 个服务状态", success_count),
+                MsgType::Success,
+            );
+        } else {
+            self.set_status_message(
+                format!("刷新完成: {} 成功, {} 失败", success_count, fail_count),
+                MsgType::Error,
+            );
+        }
     }
 
     pub fn remove_selected_service(&mut self) {
@@ -168,18 +188,27 @@ impl App {
         if let Some(idx) = self.selected_service {
             if idx < self.managed_services.len() {
                 let name = self.managed_services[idx].name.clone();
+                let display_name = self.managed_services[idx].display_name.clone();
+                self.set_status_message(
+                    format!("正在启动 \"{}\"...", display_name),
+                    MsgType::Info,
+                );
                 match app_service::start_service(&name) {
                     Ok(()) => {
-                        self.set_status_message(
-                            format!("已发送启动指令: {}", name),
-                            MsgType::Success,
-                        );
                         let status = app_service::get_service_status(&name)
                             .unwrap_or_else(|_| "未知".to_string());
-                        self.service_statuses.insert(name, status);
+                        self.service_statuses.insert(name.clone(), status);
+                        let current_status = self.service_statuses.get(&name).map(|s| s.as_str()).unwrap_or("未知");
+                        self.set_status_message(
+                            format!("服务 \"{}\" 已启动，当前状态: {}", display_name, Self::status_to_chinese(current_status)),
+                            MsgType::Success,
+                        );
                     }
                     Err(e) => {
-                        self.set_status_message(format!("启动失败: {}", e), MsgType::Error);
+                        self.set_status_message(
+                            format!("启动 \"{}\" 失败: {}", display_name, e),
+                            MsgType::Error,
+                        );
                     }
                 }
             }
@@ -192,23 +221,43 @@ impl App {
         if let Some(idx) = self.selected_service {
             if idx < self.managed_services.len() {
                 let name = self.managed_services[idx].name.clone();
+                let display_name = self.managed_services[idx].display_name.clone();
+                self.set_status_message(
+                    format!("正在停止 \"{}\"...", display_name),
+                    MsgType::Info,
+                );
                 match app_service::stop_service(&name) {
                     Ok(()) => {
-                        self.set_status_message(
-                            format!("已发送停止指令: {}", name),
-                            MsgType::Success,
-                        );
                         let status = app_service::get_service_status(&name)
                             .unwrap_or_else(|_| "未知".to_string());
-                        self.service_statuses.insert(name, status);
+                        self.service_statuses.insert(name.clone(), status);
+                        let current_status = self.service_statuses.get(&name).map(|s| s.as_str()).unwrap_or("未知");
+                        self.set_status_message(
+                            format!("服务 \"{}\" 已停止，当前状态: {}", display_name, Self::status_to_chinese(current_status)),
+                            MsgType::Success,
+                        );
                     }
                     Err(e) => {
-                        self.set_status_message(format!("停止失败: {}", e), MsgType::Error);
+                        self.set_status_message(
+                            format!("停止 \"{}\" 失败: {}", display_name, e),
+                            MsgType::Error,
+                        );
                     }
                 }
             }
         } else {
             self.set_status_message("请先选择一个服务".to_string(), MsgType::Info);
+        }
+    }
+
+    fn status_to_chinese(status: &str) -> &str {
+        match status {
+            "Running" => "运行中",
+            "Stopped" => "已停止",
+            "Paused" => "已暂停",
+            "StartPending" => "启动中",
+            "StopPending" => "停止中",
+            _ => status,
         }
     }
 

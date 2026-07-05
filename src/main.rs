@@ -223,7 +223,7 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
     // 状态消息
     let msg = app.status_message();
     let (msg_style, prefix) = if msg.is_empty() {
-        (Style::default().fg(Color::DarkGray), "就绪")
+        (Style::default().fg(Color::DarkGray), "")
     } else {
         match app.status_message_type() {
             MsgType::Success => (Style::default().fg(Color::Green).add_modifier(Modifier::BOLD), "✓ "),
