@@ -4,28 +4,28 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
     Service,
-    Settings,
     Tools,
+    Settings,
 }
 
 impl View {
     pub fn all() -> &'static [View] {
-        &[View::Service, View::Settings, View::Tools]
+        &[View::Service, View::Tools, View::Settings]
     }
 
     pub fn index(&self) -> usize {
         match self {
             View::Service => 0,
-            View::Settings => 1,
-            View::Tools => 2,
+            View::Tools => 1,
+            View::Settings => 2,
         }
     }
 
     pub fn from_index(index: usize) -> Self {
         match index {
             0 => View::Service,
-            1 => View::Settings,
-            2 => View::Tools,
+            1 => View::Tools,
+            2 => View::Settings,
             _ => View::Service,
         }
     }

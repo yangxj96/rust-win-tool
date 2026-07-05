@@ -122,7 +122,7 @@ fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(0),
-        Constraint::Length(3),
+        Constraint::Length(4),
     ])
     .split(frame.area());
 
@@ -143,8 +143,8 @@ fn render(frame: &mut Frame, app: &App) {
 fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let titles = vec![
         " 服务管理 ",
-        " 设置 ",
         " 系统工具 ",
+        " 设置 ",
     ];
 
     let selected = app.current_view().index();
@@ -172,19 +172,14 @@ fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
 }
 
 fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
-    let main_chunks = Layout::horizontal([
-        Constraint::Min(0),    // 左侧：操作指引 + 状态消息
-        Constraint::Length(20), // 右侧：执行状态区
+    // 整体分为上下两行
+    let rows = Layout::vertical([
+        Constraint::Length(1), // 第1行：操作指引
+        Constraint::Length(1), // 第2行：状态消息 + 执行状态
     ])
     .split(area);
 
-    let left_chunks = Layout::vertical([
-        Constraint::Min(0),    // 操作指引
-        Constraint::Length(1), // 状态消息
-    ])
-    .split(main_chunks[0]);
-
-    // 操作指引
+    // 第1行：操作指引
     let help = match app.current_view() {
         View::Service => Line::from(vec![
             Span::styled(" ←→", Style::default().fg(Color::Yellow)),
@@ -227,10 +222,17 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
     };
     let help_bar = Paragraph::new(help)
         .style(Style::default().fg(Color::DarkGray))
-        .block(Block::default().borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM));
-    frame.render_widget(help_bar, left_chunks[0]);
+        .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::TOP));
+    frame.render_widget(help_bar, rows[0]);
 
-    // 状态消息
+    // 第2行：状态消息（左）+ 执行状态区（右）
+    let row2_chunks = Layout::horizontal([
+        Constraint::Min(0),    // 左侧：状态消息
+        Constraint::Length(20), // 右侧：执行状态区
+    ])
+    .split(rows[1]);
+
+    // 状态消息（左侧）
     let msg = app.status_message();
     let (msg_style, prefix) = if msg.is_empty() {
         (Style::default().fg(Color::DarkGray), "")
@@ -248,11 +250,11 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
         Span::styled(format!(" {}{}", prefix, display_msg), msg_style),
     ]);
     let msg_bar = Paragraph::new(msg_line)
-        .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM));
-    frame.render_widget(msg_bar, left_chunks[1]);
+        .block(Block::default().borders(Borders::LEFT | Borders::BOTTOM));
+    frame.render_widget(msg_bar, row2_chunks[0]);
 
-    // 右侧执行状态区
-    let status_area = main_chunks[1];
+    // 执行状态区（右侧）
+    let status_area = row2_chunks[1];
     let (status_text, status_style) = if app.is_executing() {
         (
             format!(" ⏳ {}", app.executing_action()),
@@ -268,11 +270,11 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
         } else {
             match app.status_message_type() {
                 MsgType::Success => (
-                    format!(" ✓ 完成"),
+                    " ✓ 完成".to_string(),
                     Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
                 ),
                 MsgType::Error => (
-                    format!(" ✗ 失败"),
+                    " ✗ 失败".to_string(),
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
                 MsgType::Info => (
