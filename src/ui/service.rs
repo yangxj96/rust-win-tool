@@ -62,7 +62,12 @@ impl ServiceView {
                         "Stopped" => "已停止",
                         other => other,
                     };
-                    let enabled_text = if svc.enabled { "是" } else { "否" };
+                    let msg = app.service_message(&svc.name);
+                    let msg_style = if msg.is_empty() {
+                        Style::default()
+                    } else {
+                        Style::default().fg(Color::Red)
+                    };
 
                     let row_style = if Some(i) == app.selected_service() {
                         Style::default().bg(Color::DarkGray)
@@ -74,7 +79,7 @@ impl ServiceView {
                         Cell::from(Span::raw(&svc.name)),
                         Cell::from(Span::raw(&svc.display_name)),
                         Cell::from(Span::styled(status_text, status_style)),
-                        Cell::from(Span::raw(enabled_text)),
+                        Cell::from(Span::styled(msg, msg_style)),
                     ])
                     .style(row_style)
                 })
@@ -86,7 +91,7 @@ impl ServiceView {
                     Constraint::Length(30),
                     Constraint::Min(20),
                     Constraint::Length(10),
-                    Constraint::Length(8),
+                    Constraint::Min(0),
                 ],
             )
             .header(Row::new(vec![
@@ -109,7 +114,7 @@ impl ServiceView {
                         .add_modifier(Modifier::BOLD),
                 )),
                 Cell::from(Span::styled(
-                    "启用",
+                    "消息",
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),

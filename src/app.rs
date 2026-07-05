@@ -41,6 +41,7 @@ pub struct App {
     current_view: View,
     managed_services: Vec<ManagedService>,
     service_statuses: std::collections::HashMap<String, String>,
+    service_messages: std::collections::HashMap<String, String>,
     data_file: PathBuf,
     selected_service: Option<usize>,
     settings_selected: usize,
@@ -73,6 +74,7 @@ impl App {
             current_view: View::Service,
             managed_services,
             service_statuses: std::collections::HashMap::new(),
+            service_messages: std::collections::HashMap::new(),
             data_file,
             selected_service: selected,
             settings_selected: 0,
@@ -117,6 +119,10 @@ impl App {
             .get(name)
             .map(|s| s.as_str())
             .unwrap_or("Unknown")
+    }
+
+    pub fn service_message(&self, name: &str) -> &str {
+        self.service_messages.get(name).map(|s| s.as_str()).unwrap_or("")
     }
 
     pub fn selected_service(&self) -> Option<usize> {
@@ -174,13 +180,19 @@ impl App {
     pub fn execute_pending(&mut self, action: PendingAction) {
         match action {
             PendingAction::StartService(name) => {
-                let _ = app_service::start_service(&name);
+                match app_service::start_service(&name) {
+                    Ok(()) => { self.service_messages.remove(&name); }
+                    Err(e) => { self.service_messages.insert(name.clone(), e.to_string()); }
+                }
                 let status = app_service::get_service_status(&name)
                     .unwrap_or_else(|_| "未知".to_string());
                 self.service_statuses.insert(name, status);
             }
             PendingAction::StopService(name) => {
-                let _ = app_service::stop_service(&name);
+                match app_service::stop_service(&name) {
+                    Ok(()) => { self.service_messages.remove(&name); }
+                    Err(e) => { self.service_messages.insert(name.clone(), e.to_string()); }
+                }
                 let status = app_service::get_service_status(&name)
                     .unwrap_or_else(|_| "未知".to_string());
                 self.service_statuses.insert(name, status);
