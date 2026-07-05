@@ -19,34 +19,31 @@ Windows 系统管理工具，基于 Rust + ratatui 构建的 TUI (终端用户�
 ## 开发
 
 ```bash
-cargo build --manifest-path src-tauri/Cargo.toml
-cargo run --manifest-path src-tauri/Cargo.toml
+cargo build
+cargo run
 ```
 
 ## 构建
 
 ```bash
-cargo build --manifest-path src-tauri/Cargo.toml --release
+cargo build --release
 ```
 
 ## 项目结构
 
 ```
-├── src-tauri/                  # Rust 后端
-│   ├── src/
-│   │   ├── main.rs             # TUI 入口
-│   │   ├── app.rs              # 应用状态管理
-│   │   ├── lib.rs              # 库函数
-│   │   └── ui/                 # UI 模块
-│   │       ├── service.rs      # 服务管理界面
-│   │       ├── settings.rs     # 设置界面
-│   │       └── tools.rs        # 工具集合界面
-│   └── lib/                    # 功能 crate
-│       ├── core/               # 应用配置、错误类型
-│       ├── utils/              # UUID、时间戳
-│       ├── db/                 # 数据库（桩）
-│       └── service/            # Windows 服务管理
-└── AGENTS.md                   # AI 代理开发指引
+├── Cargo.toml              # Workspace root
+├── src/
+│   ├── main.rs             # TUI 入口
+│   ├── app.rs              # 应用状态管理
+│   └── ui/                 # UI 模块
+│       ├── service.rs      # 服务管理界面
+│       ├── settings.rs     # 设置界面
+│       └── tools.rs        # 工具集合界面
+└── lib/                    # 功能 crate
+    ├── core/               # 应用配置、错误类型
+    ├── utils/              # UUID、时间戳
+    └── service/            # Windows 服务管理
 ```
 
 ## TUI 导航

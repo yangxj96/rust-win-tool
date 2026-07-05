@@ -1,10 +1,6 @@
-# Dependencies
-node_modules/
-.pnpm-store/
-
-# Build outputs
-dist/
-src-tauri/target/
+# Build output
+/target/
+.codegraph/
 
 # IDE
 .vscode/
@@ -23,11 +19,3 @@ Thumbs.db
 
 # Logs
 *.log
-npm-debug.log*
-pnpm-debug.log*
-
-# Tauri
-src-tauri/gen/
-src-tauri/icons/*.png
-src-tauri/icons/*.icns
-src-tauri/icons/*.ico
