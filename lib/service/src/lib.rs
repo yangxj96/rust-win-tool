@@ -12,6 +12,7 @@ pub struct ServiceInfo {
     pub display_name: String,
     pub status: String,
     pub start_type: String,
+    /// Currently unused; kept for JSON backward compatibility
     pub description: String,
 }
 
@@ -19,6 +20,7 @@ pub struct ServiceInfo {
 pub struct ManagedService {
     pub name: String,
     pub display_name: String,
+    /// Currently unused; kept for JSON backward compatibility
     pub enabled: bool,
 }
 

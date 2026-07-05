@@ -2,7 +2,7 @@
 
 ## Project
 
-TUI (Terminal User Interface) desktop app — Rust multi-crate backend with ratatui frontend. Windows system tool.
+TUI (Terminal User Interface) desktop app — Rust with ratatui frontend. Windows system tool.
 
 ## Build Commands
 
@@ -17,10 +17,10 @@ cargo test
 ## Project Structure
 
 ```
-├── Cargo.toml                  # Workspace root, all deps declared here
+├── Cargo.toml                  # Root crate, all deps declared here
 ├── src/
 │   ├── main.rs                 # TUI entrypoint, event loop, rendering
-│   ├── app.rs                  # Application state, View enum, business logic
+│   ├── app.rs                  # Application state (App, View, Theme, AddDialogState), business logic
 │   ├── i18n.rs                 # Internationalization (Language, Translations, ZH/EN)
 │   ├── theme.rs                # Theme colors (ThemeColors, DARK/LIGHT)
 │   └── ui/                     # UI modules
@@ -29,20 +29,28 @@ cargo test
 │       ├── tools.rs            # Tools list + system info detail view
 │       ├── scripts.rs          # Scripts list + Navicat cleanup (winreg)
 │       └── settings.rs         # Settings view (language/theme switching)
-└── lib/                        # Feature crates
-    ├── core/                   # App config, error types
-    ├── utils/                  # UUID, timestamps
-    └── service/                # Windows service management via PowerShell
+└── lib/
+    └── service/                # Windows service management via PowerShell (app-service crate)
 ```
 
 ## Architecture
 
-- TUI frontend (`src/ui/`) → App state (`src/app.rs`) → lib crates (`lib/`)
+- TUI frontend (`src/ui/`) → App state (`src/app.rs`) → lib crate (`lib/service/`)
 - Uses ratatui for terminal UI rendering, crossterm for terminal input
 - i18n: `src/i18n.rs` defines `Translations` struct with `ZH`/`EN` static instances; access via `app.t()`
-- Theme: `src/theme.rs` defines `ThemeColors` struct with `DARK`/`LIGHT` static instances; access via `app.theme_colors()`
-- Scripts: `src/ui/scripts.rs` uses `winreg` crate for direct registry operations (no batch files)
-- System info: PowerShell `Get-CimInstance` with UTF8 encoding for Chinese support
+- Theme: `app.rs` defines `Theme` enum (`Dark`/`Light`); `src/theme.rs` defines `ThemeColors` with `DARK`/`LIGHT` static instances; access via `app.theme_colors()`
+- Scripts: `src/ui/scripts.rs` uses `winreg` crate for direct registry operations; accepts `Language` for i18n error messages
+- System info: PowerShell `Get-CimInstance` with UTF8 encoding
+
+## Key Types
+
+- `App` — main application state struct (`src/app.rs`)
+- `View` — enum for tab views (`Service`, `Tools`, `Scripts`, `Settings`)
+- `Theme` — enum for theme selection (`Dark`, `Light`), serialized via serde
+- `AddDialogState` — sub-struct for add-service dialog state
+- `PendingAction` — enum for deferred service operations (start/stop/refresh)
+- `SystemInfo` — struct holding OS, CPU, RAM info
+- `ServiceInfo` / `ManagedService` — from `app-service` crate
 
 ## TUI Navigation
 
@@ -83,4 +91,4 @@ cargo test
 - `winreg` 0.55 — Windows registry operations (scripts)
 - `unicode-width` 0.2 — CJK character width calculation for alignment
 - `serde` / `serde_json` — JSON serialization (settings, PowerShell output)
-- `app-service` — PowerShell-based Windows service management
+- `app-service` — PowerShell-based Windows service management (local crate)

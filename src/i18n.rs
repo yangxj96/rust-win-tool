@@ -93,6 +93,8 @@ pub struct Translations {
     pub scripts_header: &'static str,
     pub script_reset_navicat: &'static str,
     pub script_reset_navicat_desc: &'static str,
+    pub script_err_open_clsid: &'static str,
+    pub script_result_cleanup: &'static str,
 
     // 设置视图
     pub settings_header: &'static str,
@@ -109,6 +111,7 @@ pub struct Translations {
     pub dialog_hint_cancel: &'static str,
 
     // 错误消息
+    pub err_unknown: &'static str,
     pub err_permission: &'static str,
     pub err_running: &'static str,
     pub err_not_started: &'static str,
@@ -181,6 +184,8 @@ pub const ZH: Translations = Translations {
     scripts_header: "执行脚本",
     script_reset_navicat: "重置Navicat时间",
     script_reset_navicat_desc: "清理Navicat注册信息和CLSID残留",
+    script_err_open_clsid: "无法打开 CLSID: {}",
+    script_result_cleanup: "清理完成，删除了 {} 个 CLSID 键",
 
     settings_header: "设置",
     setting_language: "语言选择",
@@ -194,6 +199,7 @@ pub const ZH: Translations = Translations {
     dialog_hint_add: "添加",
     dialog_hint_cancel: "取消",
 
+    err_unknown: "未知",
     err_permission: "权限不足",
     err_running: "服务已在运行",
     err_not_started: "服务未启动",
@@ -266,6 +272,8 @@ pub const EN: Translations = Translations {
     scripts_header: "Scripts",
     script_reset_navicat: "Reset Navicat",
     script_reset_navicat_desc: "Clean Navicat registration and CLSID",
+    script_err_open_clsid: "Failed to open CLSID: {}",
+    script_result_cleanup: "Cleanup done, deleted {} CLSID keys",
 
     settings_header: "Settings",
     setting_language: "Language",
@@ -279,6 +287,7 @@ pub const EN: Translations = Translations {
     dialog_hint_add: "Add",
     dialog_hint_cancel: "Cancel",
 
+    err_unknown: "Unknown",
     err_permission: "Access denied",
     err_running: "Already running",
     err_not_started: "Not started",

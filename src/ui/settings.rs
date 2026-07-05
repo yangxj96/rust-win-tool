@@ -29,8 +29,8 @@ impl SettingsView {
 
         let lang_value = app.language().name();
         let theme_value = match app.theme() {
-            "light" => t.theme_light,
-            _ => t.theme_dark,
+            crate::app::Theme::Light => t.theme_light,
+            crate::app::Theme::Dark => t.theme_dark,
         };
 
         let items = [

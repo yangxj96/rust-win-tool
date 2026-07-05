@@ -22,7 +22,12 @@ pub const SCRIPTS: &[Script] = &[
     },
 ];
 
-pub fn reset_navicat() -> Result<String, String> {
+pub fn reset_navicat(lang: crate::i18n::Language) -> Result<String, String> {
+    use crate::i18n::{Language, EN, ZH};
+    let t = match lang {
+        Language::Chinese => &ZH,
+        Language::English => &EN,
+    };
     let hku = RegKey::predef(HKEY_CURRENT_USER);
 
     let _ = hku.delete_subkey_all(r"Software\PremiumSoft\NavicatPremium\Registration17XCS");
@@ -31,7 +36,7 @@ pub fn reset_navicat() -> Result<String, String> {
     let clsid_path = r"Software\Classes\CLSID";
     let clsid = hku
         .open_subkey_with_flags(clsid_path, KEY_READ)
-        .map_err(|e| format!("无法打开 CLSID: {}", e))?;
+        .map_err(|e| t.script_err_open_clsid.replace("{}", &e.to_string()))?;
 
     let mut deleted = 0u32;
     for key_name in clsid.enum_keys().filter_map(|k| k.ok()) {
@@ -42,7 +47,7 @@ pub fn reset_navicat() -> Result<String, String> {
         }
     }
 
-    Ok(format!("清理完成，删除了 {} 个 CLSID 键", deleted))
+    Ok(t.script_result_cleanup.replace("{}", &deleted.to_string()))
 }
 
 fn should_delete_key(hku: &RegKey, path: &str) -> bool {

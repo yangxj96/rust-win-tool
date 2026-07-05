@@ -12,10 +12,7 @@ ratatui = "0.30"
 crossterm = "0.29"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-app-core = { path = "lib/core" }
-app-utils = { path = "lib/utils" }
 app-service = { path = "lib/service" }
-anyhow = "1"
 dirs = "5"
 winreg = "0.55"
 unicode-width = "0.2"
