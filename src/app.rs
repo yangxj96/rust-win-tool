@@ -1,4 +1,4 @@
-use app_service::{ManagedService, ServiceInfo};
+use app_service::{ManagedService, ServiceError, ServiceInfo};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -183,8 +183,7 @@ impl App {
                 match app_service::start_service(&name) {
                     Ok(()) => { self.service_messages.remove(&name); }
                     Err(e) => {
-                        let msg = e.to_string();
-                        self.service_messages.insert(name.clone(), truncate(&msg, 40));
+                        self.service_messages.insert(name.clone(), map_error(&e));
                     }
                 }
                 let status = app_service::get_service_status(&name)
@@ -195,8 +194,7 @@ impl App {
                 match app_service::stop_service(&name) {
                     Ok(()) => { self.service_messages.remove(&name); }
                     Err(e) => {
-                        let msg = e.to_string();
-                        self.service_messages.insert(name.clone(), truncate(&msg, 40));
+                        self.service_messages.insert(name.clone(), map_error(&e));
                     }
                 }
                 let status = app_service::get_service_status(&name)
@@ -393,11 +391,26 @@ impl App {
     }
 }
 
-fn truncate(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s.to_string()
+fn map_error(e: &ServiceError) -> String {
+    let detail = match e {
+        ServiceError::StartFailed(d)
+        | ServiceError::StopFailed(d)
+        | ServiceError::CommandFailed(d)
+        | ServiceError::ParseFailed(d) => d.as_str(),
+        ServiceError::NotFound(_) => return "服务不存在".to_string(),
+    };
+    let lower = detail.to_lowercase();
+    if lower.contains("access is denied") || lower.contains("access denied") {
+        "权限不足".to_string()
+    } else if lower.contains("already running") || lower.contains("already started") {
+        "服务已在运行".to_string()
+    } else if lower.contains("not started") || lower.contains("has not been started") {
+        "服务未启动".to_string()
+    } else if lower.contains("cannot be stopped") || lower.contains("can not be stopped") {
+        "服务不可停止".to_string()
+    } else if lower.contains("timeout") {
+        "操作超时".to_string()
     } else {
-        let truncated: String = s.chars().take(max_chars).collect();
-        format!("{}...", truncated)
+        "操作失败".to_string()
     }
 }
