@@ -38,6 +38,8 @@ impl View {
 pub enum PendingAction {
     StartService(String),
     StopService(String),
+    StartAll,
+    StopAll,
     RefreshAll,
 }
 
@@ -189,6 +191,22 @@ impl App {
         }
     }
 
+    pub fn start_all_services(&mut self) {
+        let msg = self.t().status_starting.to_string();
+        for svc in &self.managed_services {
+            self.service_statuses.insert(svc.name.clone(), msg.clone());
+        }
+        self.pending_action = Some(PendingAction::StartAll);
+    }
+
+    pub fn stop_all_services(&mut self) {
+        let msg = self.t().status_stopping.to_string();
+        for svc in &self.managed_services {
+            self.service_statuses.insert(svc.name.clone(), msg.clone());
+        }
+        self.pending_action = Some(PendingAction::StopAll);
+    }
+
     pub fn take_pending_action(&mut self) -> Option<PendingAction> {
         self.pending_action.take()
     }
@@ -217,6 +235,34 @@ impl App {
                 let status = app_service::get_service_status(&name)
                     .unwrap_or_else(|_| "未知".to_string());
                 self.service_statuses.insert(name, status);
+            }
+            PendingAction::StartAll => {
+                let services: Vec<String> = self.managed_services.iter().map(|s| s.name.clone()).collect();
+                for name in &services {
+                    match app_service::start_service(name) {
+                        Ok(()) => { self.service_messages.remove(name); }
+                        Err(e) => {
+                            self.service_messages.insert(name.clone(), map_error(&e, lang));
+                        }
+                    }
+                    let status = app_service::get_service_status(name)
+                        .unwrap_or_else(|_| "未知".to_string());
+                    self.service_statuses.insert(name.clone(), status);
+                }
+            }
+            PendingAction::StopAll => {
+                let services: Vec<String> = self.managed_services.iter().map(|s| s.name.clone()).collect();
+                for name in &services {
+                    match app_service::stop_service(name) {
+                        Ok(()) => { self.service_messages.remove(name); }
+                        Err(e) => {
+                            self.service_messages.insert(name.clone(), map_error(&e, lang));
+                        }
+                    }
+                    let status = app_service::get_service_status(name)
+                        .unwrap_or_else(|_| "未知".to_string());
+                    self.service_statuses.insert(name.clone(), status);
+                }
             }
             PendingAction::RefreshAll => {
                 self.service_messages.clear();

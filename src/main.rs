@@ -96,6 +96,16 @@ fn handle_main_key(app: &mut App, code: KeyCode) -> bool {
                 app.refresh_statuses();
             }
         }
+        KeyCode::Char('S') => {
+            if *app.current_view() == View::Service {
+                app.start_all_services();
+            }
+        }
+        KeyCode::Char('P') => {
+            if *app.current_view() == View::Service {
+                app.stop_all_services();
+            }
+        }
         KeyCode::Enter if *app.current_view() == View::Settings && app.settings_selected() == 0 => {
             app.cycle_language();
         }
@@ -184,7 +194,9 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
             s.push(Span::styled(format!("a {} ", t.hint_add), y));
             s.push(Span::styled(format!("d {} ", t.hint_delete), y));
             s.push(Span::styled(format!("s {} ", t.hint_start), y));
+            s.push(Span::styled(format!("S {} ", t.hint_start_all), y));
             s.push(Span::styled(format!("p {} ", t.hint_stop), y));
+            s.push(Span::styled(format!("P {} ", t.hint_stop_all), y));
             s.push(Span::styled(format!("r {} ", t.hint_refresh), y));
         }
         View::Settings | View::Tools => {

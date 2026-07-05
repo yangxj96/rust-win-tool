@@ -37,7 +37,7 @@ pub const LIGHT: ThemeColors = ThemeColors {
     fg_default: Color::Black,
     bg_select: Color::Rgb(200, 220, 240),
     fg_select: Color::Black,
-    running: Color::Green,
-    stopped: Color::Red,
-    error: Color::Red,
+    running: Color::Rgb(0, 150, 0),
+    stopped: Color::Rgb(200, 50, 50),
+    error: Color::Rgb(200, 50, 50),
 };
