@@ -75,6 +75,19 @@ pub struct Translations {
     pub tool_eventlog: &'static str,
     pub tool_eventlog_desc: &'static str,
 
+    // 系统信息
+    pub sysinfo_title: &'static str,
+    pub sysinfo_os: &'static str,
+    pub sysinfo_version: &'static str,
+    pub sysinfo_build: &'static str,
+    pub sysinfo_computer: &'static str,
+    pub sysinfo_user: &'static str,
+    pub sysinfo_cpu: &'static str,
+    pub sysinfo_cores: &'static str,
+    pub sysinfo_ram: &'static str,
+    pub sysinfo_back_hint: &'static str,
+    pub sysinfo_fetching: &'static str,
+
     // 脚本视图
     pub scripts_header: &'static str,
     pub script_reset_navicat: &'static str,
@@ -151,6 +164,18 @@ pub const ZH: Translations = Translations {
     tool_eventlog: "事件查看器",
     tool_eventlog_desc: "查看系统事件日志",
 
+    sysinfo_title: "系统信息",
+    sysinfo_os: "操作系统",
+    sysinfo_version: "版本",
+    sysinfo_build: "构建号",
+    sysinfo_computer: "计算机名",
+    sysinfo_user: "用户名",
+    sysinfo_cpu: "CPU",
+    sysinfo_cores: "核心数",
+    sysinfo_ram: "内存 (GB)",
+    sysinfo_back_hint: "按 Esc 返回",
+    sysinfo_fetching: "正在获取系统信息...",
+
     scripts_header: "执行脚本",
     script_reset_navicat: "重置Navicat时间",
     script_reset_navicat_desc: "清理Navicat注册信息和CLSID残留",
@@ -222,6 +247,18 @@ pub const EN: Translations = Translations {
     tool_registry_desc: "Edit Windows registry",
     tool_eventlog: "Event Viewer",
     tool_eventlog_desc: "View system event logs",
+
+    sysinfo_title: "System Info",
+    sysinfo_os: "OS",
+    sysinfo_version: "Version",
+    sysinfo_build: "Build",
+    sysinfo_computer: "Computer",
+    sysinfo_user: "User",
+    sysinfo_cpu: "CPU",
+    sysinfo_cores: "Cores",
+    sysinfo_ram: "RAM (GB)",
+    sysinfo_back_hint: "Press Esc to go back",
+    sysinfo_fetching: "Fetching system info...",
 
     scripts_header: "Scripts",
     script_reset_navicat: "Reset Navicat",

@@ -116,6 +116,12 @@ fn handle_main_key(app: &mut App, code: KeyCode) -> bool {
         KeyCode::Enter if *app.current_view() == View::Scripts => {
             app.execute_script_for_selected();
         }
+        KeyCode::Enter if *app.current_view() == View::Tools && !app.tool_detail_active() => {
+            app.toggle_tool_detail();
+        }
+        KeyCode::Esc if *app.current_view() == View::Tools && app.tool_detail_active() => {
+            app.close_tool_detail();
+        }
         _ => {}
     }
     false
