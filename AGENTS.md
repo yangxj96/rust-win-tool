@@ -60,6 +60,3 @@ cargo test
 - `app-service` depends on `base64` crate for `-EncodedCommand` encoding
 - Uses ratatui 0.30 and crossterm 0.29 for TUI
 
-## Git Rules
-
-- 每次git提交的时候都需要包含新增和修改文件
