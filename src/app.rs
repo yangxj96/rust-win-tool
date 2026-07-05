@@ -29,32 +29,14 @@ impl View {
             _ => View::Service,
         }
     }
-
-    pub fn title(&self) -> &str {
-        match self {
-            View::Service => "服务管理",
-            View::Settings => "设置",
-            View::Tools => "系统工具",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum MsgType {
-    Success,
-    Error,
-    Info,
 }
 
 pub struct App {
     current_view: View,
     managed_services: Vec<ManagedService>,
-    all_services: Vec<ServiceInfo>,
     service_statuses: std::collections::HashMap<String, String>,
     data_file: PathBuf,
     selected_service: Option<usize>,
-    status_message: String,
-    status_message_type: MsgType,
     settings_selected: usize,
     tools_selected: usize,
     // 添加服务对话框
@@ -63,9 +45,6 @@ pub struct App {
     add_dialog_filtered: Vec<usize>,
     add_dialog_selected: usize,
     add_dialog_search: String,
-    // 执行状态
-    is_executing: bool,
-    executing_action: String,
 }
 
 impl App {
@@ -86,12 +65,9 @@ impl App {
         Self {
             current_view: View::Service,
             managed_services,
-            all_services: Vec::new(),
             service_statuses: std::collections::HashMap::new(),
             data_file,
             selected_service: selected,
-            status_message: String::new(),
-            status_message_type: MsgType::Info,
             settings_selected: 0,
             tools_selected: 0,
             show_add_dialog: false,
@@ -99,8 +75,6 @@ impl App {
             add_dialog_filtered: Vec::new(),
             add_dialog_selected: 0,
             add_dialog_search: String::new(),
-            is_executing: false,
-            executing_action: String::new(),
         }
     }
 
@@ -142,33 +116,15 @@ impl App {
     }
 
     pub fn refresh_statuses(&mut self) {
-        self.set_executing("刷新状态");
-        self.set_status_message("正在刷新服务状态...".to_string(), MsgType::Info);
-        let mut success_count = 0;
-        let mut fail_count = 0;
         for svc in &self.managed_services {
             match app_service::get_service_status(&svc.name) {
                 Ok(status) => {
                     self.service_statuses.insert(svc.name.clone(), status);
-                    success_count += 1;
                 }
                 Err(_) => {
                     self.service_statuses.insert(svc.name.clone(), "未知".to_string());
-                    fail_count += 1;
                 }
             }
-        }
-        self.clear_executing();
-        if fail_count == 0 {
-            self.set_status_message(
-                format!("已刷新 {} 个服务状态", success_count),
-                MsgType::Success,
-            );
-        } else {
-            self.set_status_message(
-                format!("刷新完成: {} 成功, {} 失败", success_count, fail_count),
-                MsgType::Error,
-            );
         }
     }
 
@@ -184,10 +140,7 @@ impl App {
                 } else if idx >= self.managed_services.len() {
                     self.selected_service = Some(self.managed_services.len() - 1);
                 }
-                self.set_status_message(format!("已删除服务: {}", name), MsgType::Success);
             }
-        } else {
-            self.set_status_message("请先选择一个服务".to_string(), MsgType::Info);
         }
     }
 
@@ -195,35 +148,14 @@ impl App {
         if let Some(idx) = self.selected_service {
             if idx < self.managed_services.len() {
                 let name = self.managed_services[idx].name.clone();
-                let display_name = self.managed_services[idx].display_name.clone();
-                self.set_executing(&format!("启动 {}", display_name));
-                self.set_status_message(
-                    format!("正在启动 \"{}\"...", display_name),
-                    MsgType::Info,
-                );
-                match app_service::start_service(&name) {
-                    Ok(()) => {
-                        let status = app_service::get_service_status(&name)
-                            .unwrap_or_else(|_| "未知".to_string());
-                        let current_status = Self::status_to_chinese(&status).to_string();
-                        self.service_statuses.insert(name, status);
-                        self.clear_executing();
-                        self.set_status_message(
-                            format!("服务 \"{}\" 已启动，当前状态: {}", display_name, current_status),
-                            MsgType::Success,
-                        );
-                    }
-                    Err(e) => {
-                        self.clear_executing();
-                        self.set_status_message(
-                            format!("启动 \"{}\" 失败: {}", display_name, e),
-                            MsgType::Error,
-                        );
-                    }
-                }
+                self.service_statuses.insert(name.clone(), "启动中".to_string());
+                let result = app_service::start_service(&name);
+                let status = match result {
+                    Ok(()) => app_service::get_service_status(&name).unwrap_or_else(|_| "未知".to_string()),
+                    Err(_) => app_service::get_service_status(&name).unwrap_or_else(|_| "未知".to_string()),
+                };
+                self.service_statuses.insert(name, status);
             }
-        } else {
-            self.set_status_message("请先选择一个服务".to_string(), MsgType::Info);
         }
     }
 
@@ -231,46 +163,14 @@ impl App {
         if let Some(idx) = self.selected_service {
             if idx < self.managed_services.len() {
                 let name = self.managed_services[idx].name.clone();
-                let display_name = self.managed_services[idx].display_name.clone();
-                self.set_executing(&format!("停止 {}", display_name));
-                self.set_status_message(
-                    format!("正在停止 \"{}\"...", display_name),
-                    MsgType::Info,
-                );
-                match app_service::stop_service(&name) {
-                    Ok(()) => {
-                        let status = app_service::get_service_status(&name)
-                            .unwrap_or_else(|_| "未知".to_string());
-                        let current_status = Self::status_to_chinese(&status).to_string();
-                        self.service_statuses.insert(name, status);
-                        self.clear_executing();
-                        self.set_status_message(
-                            format!("服务 \"{}\" 已停止，当前状态: {}", display_name, current_status),
-                            MsgType::Success,
-                        );
-                    }
-                    Err(e) => {
-                        self.clear_executing();
-                        self.set_status_message(
-                            format!("停止 \"{}\" 失败: {}", display_name, e),
-                            MsgType::Error,
-                        );
-                    }
-                }
+                self.service_statuses.insert(name.clone(), "停止中".to_string());
+                let result = app_service::stop_service(&name);
+                let status = match result {
+                    Ok(()) => app_service::get_service_status(&name).unwrap_or_else(|_| "未知".to_string()),
+                    Err(_) => app_service::get_service_status(&name).unwrap_or_else(|_| "未知".to_string()),
+                };
+                self.service_statuses.insert(name, status);
             }
-        } else {
-            self.set_status_message("请先选择一个服务".to_string(), MsgType::Info);
-        }
-    }
-
-    fn status_to_chinese(status: &str) -> &str {
-        match status {
-            "Running" => "运行中",
-            "Stopped" => "已停止",
-            "Paused" => "已暂停",
-            "StartPending" => "启动中",
-            "StopPending" => "停止中",
-            _ => status,
         }
     }
 
@@ -297,17 +197,12 @@ impl App {
     }
 
     pub fn open_add_dialog(&mut self) {
-        match app_service::list_all_services() {
-            Ok(services) => {
-                self.add_dialog_services = services;
-                self.add_dialog_search.clear();
-                self.add_dialog_selected = 0;
-                self.rebuild_add_dialog_filter();
-                self.show_add_dialog = true;
-            }
-            Err(e) => {
-                self.set_status_message(format!("加载服务列表失败: {}", e), MsgType::Error);
-            }
+        if let Ok(services) = app_service::list_all_services() {
+            self.add_dialog_services = services;
+            self.add_dialog_search.clear();
+            self.add_dialog_selected = 0;
+            self.rebuild_add_dialog_filter();
+            self.show_add_dialog = true;
         }
     }
 
@@ -356,27 +251,17 @@ impl App {
             let real_idx = self.add_dialog_filtered[self.add_dialog_selected];
             let svc = &self.add_dialog_services[real_idx];
             let name = svc.name.clone();
-            let display_name = svc.display_name.clone();
 
-            if self.managed_services.iter().any(|s| s.name == name) {
-                self.set_status_message(
-                    format!("服务 \"{}\" 已在管理列表中", display_name),
-                    MsgType::Info,
-                );
-            } else {
+            if !self.managed_services.iter().any(|s| s.name == name) {
                 self.managed_services.push(ManagedService {
-                    name: name.clone(),
-                    display_name: display_name.clone(),
+                    name,
+                    display_name: svc.display_name.clone(),
                     enabled: true,
                 });
                 app_service::save_managed_services(&self.data_file, &self.managed_services);
                 if self.selected_service.is_none() {
                     self.selected_service = Some(0);
                 }
-                self.set_status_message(
-                    format!("已添加服务: {}", display_name),
-                    MsgType::Success,
-                );
             }
             self.close_add_dialog();
         }
@@ -455,41 +340,6 @@ impl App {
                 self.tools_selected = (self.tools_selected + 1) % 6;
             }
         }
-    }
-
-    // ========== 状态消息 ==========
-
-    pub fn status_message(&self) -> &str {
-        &self.status_message
-    }
-
-    pub fn status_message_type(&self) -> &MsgType {
-        &self.status_message_type
-    }
-
-    pub fn set_status_message(&mut self, msg: String, msg_type: MsgType) {
-        self.status_message = msg;
-        self.status_message_type = msg_type;
-    }
-
-    // ========== 执行状态 ==========
-
-    pub fn is_executing(&self) -> bool {
-        self.is_executing
-    }
-
-    pub fn executing_action(&self) -> &str {
-        &self.executing_action
-    }
-
-    pub fn set_executing(&mut self, action: &str) {
-        self.is_executing = true;
-        self.executing_action = action.to_string();
-    }
-
-    pub fn clear_executing(&mut self) {
-        self.is_executing = false;
-        self.executing_action.clear();
     }
 
     // ========== 其他 ==========

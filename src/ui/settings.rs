@@ -27,7 +27,7 @@ impl SettingsView {
         frame.render_widget(header, chunks[0]);
 
         // 设置列表
-        let items = vec![
+        let items = [
             ("主题切换", "深色模式"),
             ("语言选择", "简体中文"),
             ("通知设置", "启用"),
