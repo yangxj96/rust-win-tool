@@ -29,11 +29,14 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> io::Result
 
         if let Event::Key(key) = event::read()? {
             if key.kind == KeyEventKind::Press {
-                // 对话框打开时，路由到对话框处理
-                if app.show_add_dialog() {
+                let should_quit = if app.show_add_dialog() {
                     handle_add_dialog_key(app, key.code);
+                    false
                 } else {
-                    handle_main_key(app, key.code);
+                    handle_main_key(app, key.code)
+                };
+                if should_quit {
+                    return Ok(());
                 }
             }
         }
@@ -52,10 +55,10 @@ fn handle_add_dialog_key(app: &mut App, code: KeyCode) {
     }
 }
 
-fn handle_main_key(app: &mut App, code: KeyCode) {
+fn handle_main_key(app: &mut App, code: KeyCode) -> bool {
     match code {
         KeyCode::Char('q') => {
-            std::process::exit(0);
+            return true; // 退出
         }
         KeyCode::Left | KeyCode::Char('h') => app.prev_view(),
         KeyCode::Right | KeyCode::Char('l') => app.next_view(),
@@ -112,6 +115,7 @@ fn handle_main_key(app: &mut App, code: KeyCode) {
         }
         _ => {}
     }
+    false
 }
 
 fn render(frame: &mut Frame, app: &App) {
@@ -138,11 +142,9 @@ fn render(frame: &mut Frame, app: &App) {
 
 fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let titles = vec![
-        Span::styled(" 服务管理 ", Style::default().fg(Color::White)),
-        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-        Span::styled(" 设置 ", Style::default().fg(Color::White)),
-        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-        Span::styled(" 系统工具 ", Style::default().fg(Color::White)),
+        " 服务管理 ",
+        " 设置 ",
+        " 系统工具 ",
     ];
 
     let selected = app.current_view().index();
@@ -221,20 +223,21 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
     // 状态消息
     let msg = app.status_message();
     let (msg_style, prefix) = if msg.is_empty() {
-        (Style::default().fg(Color::DarkGray), "")
+        (Style::default().fg(Color::DarkGray), "就绪")
     } else {
         match app.status_message_type() {
-            MsgType::Success => (Style::default().fg(Color::Green), "✓ "),
-            MsgType::Error => (Style::default().fg(Color::Red), "✗ "),
+            MsgType::Success => (Style::default().fg(Color::Green).add_modifier(Modifier::BOLD), "✓ "),
+            MsgType::Error => (Style::default().fg(Color::Red).add_modifier(Modifier::BOLD), "✗ "),
             MsgType::Info => (Style::default().fg(Color::Yellow), "ℹ "),
         }
     };
-    let msg_line = Line::from(vec![Span::styled(
-        format!(" {}{}", prefix, msg),
-        msg_style,
-    )]);
-    let msg_bar = Paragraph::new(msg_line).style(Style::default().fg(Color::DarkGray)).block(
-        Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM),
-    );
+
+    let display_msg = if msg.is_empty() { "就绪" } else { msg };
+
+    let msg_line = Line::from(vec![
+        Span::styled(format!(" {}{}", prefix, display_msg), msg_style),
+    ]);
+    let msg_bar = Paragraph::new(msg_line)
+        .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM));
     frame.render_widget(msg_bar, inner_chunks[1]);
 }
