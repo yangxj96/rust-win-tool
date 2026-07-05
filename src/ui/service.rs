@@ -11,6 +11,7 @@ pub struct ServiceView;
 impl ServiceView {
     pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         let t = app.t();
+        let c = app.theme_colors();
         let chunks = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(0),
@@ -25,23 +26,23 @@ impl ServiceView {
         let header = Paragraph::new(format!("{} ({}){}", t.svc_header, count, selected_info))
             .style(
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(c.primary)
                     .add_modifier(Modifier::BOLD),
             )
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::DarkGray)),
+                    .border_style(Style::default().fg(c.border)),
             );
         frame.render_widget(header, chunks[0]);
 
         if app.managed_services().is_empty() {
             let empty_msg = Paragraph::new(t.svc_empty)
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(c.inactive))
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::DarkGray)),
+                        .border_style(Style::default().fg(c.border)),
                 );
             frame.render_widget(empty_msg, chunks[1]);
         } else {
@@ -52,9 +53,9 @@ impl ServiceView {
                 .map(|(i, svc)| {
                     let status = app.service_status(&svc.name);
                     let status_style = match status {
-                        "Running" => Style::default().fg(Color::Green),
-                        "Stopped" => Style::default().fg(Color::Red),
-                        _ => Style::default().fg(Color::Yellow),
+                        "Running" => Style::default().fg(c.running),
+                        "Stopped" => Style::default().fg(c.stopped),
+                        _ => Style::default().fg(c.accent),
                     };
                     let status_text = match status {
                         "Running" => t.status_running,
@@ -65,11 +66,11 @@ impl ServiceView {
                     let msg_style = if msg.is_empty() {
                         Style::default()
                     } else {
-                        Style::default().fg(Color::Red)
+                        Style::default().fg(c.error)
                     };
 
                     let row_style = if Some(i) == app.selected_service() {
-                        Style::default().bg(Color::DarkGray)
+                        Style::default().bg(c.bg_select)
                     } else {
                         Style::default()
                     };
@@ -97,32 +98,32 @@ impl ServiceView {
                 Cell::from(Span::styled(
                     t.col_name,
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(c.accent)
                         .add_modifier(Modifier::BOLD),
                 )),
                 Cell::from(Span::styled(
                     t.col_display,
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(c.accent)
                         .add_modifier(Modifier::BOLD),
                 )),
                 Cell::from(Span::styled(
                     t.col_status,
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(c.accent)
                         .add_modifier(Modifier::BOLD),
                 )),
                 Cell::from(Span::styled(
                     t.col_message,
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(c.accent)
                         .add_modifier(Modifier::BOLD),
                 )),
             ]))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::DarkGray)),
+                    .border_style(Style::default().fg(c.border)),
             );
 
             frame.render_widget(table, chunks[1]);
@@ -136,6 +137,7 @@ impl ServiceView {
 
 fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
     let t = app.t();
+    let c = app.theme_colors();
     let popup_area = centered_rect(70, 70, area);
 
     frame.render_widget(Clear, popup_area);
@@ -153,10 +155,10 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
         .title(format!(" {} ", t.dialog_add_title))
         .title_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(c.primary)
                 .add_modifier(Modifier::BOLD),
         )
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(c.primary));
     frame.render_widget(block, popup_area);
 
     let search_text = format!(" {}: {}", t.dialog_search, app.add_dialog_search());
@@ -165,7 +167,7 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(c.border)),
         );
     frame.render_widget(search_box, inner_chunks[0]);
 
@@ -174,11 +176,11 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
 
     if filtered.is_empty() {
         let empty_msg = Paragraph::new(t.dialog_empty)
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(c.inactive))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::DarkGray)),
+                    .border_style(Style::default().fg(c.border)),
             );
         frame.render_widget(empty_msg, inner_chunks[1]);
     } else {
@@ -188,9 +190,9 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
             .map(|(i, &real_idx)| {
                 let svc = &all_services[real_idx];
                 let status_style = match svc.status.as_str() {
-                    "Running" => Style::default().fg(Color::Green),
-                    "Stopped" => Style::default().fg(Color::Red),
-                    _ => Style::default().fg(Color::Yellow),
+                    "Running" => Style::default().fg(c.running),
+                    "Stopped" => Style::default().fg(c.stopped),
+                    _ => Style::default().fg(c.accent),
                 };
                 let status_text = match svc.status.as_str() {
                     "Running" => t.status_running,
@@ -199,7 +201,7 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
                 };
 
                 let row_style = if i == app.add_dialog_selected() {
-                    Style::default().bg(Color::DarkGray)
+                    Style::default().bg(c.bg_select)
                 } else {
                     Style::default()
                 };
@@ -225,45 +227,45 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
             Cell::from(Span::styled(
                 t.col_name,
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(c.accent)
                     .add_modifier(Modifier::BOLD),
             )),
             Cell::from(Span::styled(
                 t.col_display,
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(c.accent)
                     .add_modifier(Modifier::BOLD),
             )),
             Cell::from(Span::styled(
                 t.col_status,
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(c.accent)
                     .add_modifier(Modifier::BOLD),
             )),
         ]))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(c.border)),
         );
 
         frame.render_widget(table, inner_chunks[1]);
     }
 
     let hint = Line::from(vec![
-        Span::styled(" Enter", Style::default().fg(Color::Yellow)),
+        Span::styled(" Enter", Style::default().fg(c.accent)),
         Span::raw(format!(" {} ", t.dialog_hint_add)),
-        Span::styled("Esc", Style::default().fg(Color::Yellow)),
+        Span::styled("Esc", Style::default().fg(c.accent)),
         Span::raw(format!(" {} ", t.dialog_hint_cancel)),
-        Span::styled("↑↓", Style::default().fg(Color::Yellow)),
+        Span::styled("↑↓", Style::default().fg(c.accent)),
         Span::raw(format!(" {} ", t.hint_select)),
         Span::styled(
             format!(" {}/{}", app.add_dialog_selected() + 1, filtered.len()),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(c.inactive),
         ),
     ]);
     let hint_bar = Paragraph::new(hint)
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(c.inactive))
         .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM));
     frame.render_widget(hint_bar, Rect {
         x: inner_chunks[2].x,

@@ -1,6 +1,6 @@
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Tabs, Paragraph};
 use ratatui::Frame;
@@ -8,6 +8,7 @@ use std::io;
 
 mod app;
 mod i18n;
+mod theme;
 mod ui;
 
 use app::{App, View};
@@ -98,6 +99,9 @@ fn handle_main_key(app: &mut App, code: KeyCode) -> bool {
         KeyCode::Enter if *app.current_view() == View::Settings && app.settings_selected() == 0 => {
             app.cycle_language();
         }
+        KeyCode::Enter if *app.current_view() == View::Settings && app.settings_selected() == 1 => {
+            app.cycle_theme();
+        }
         _ => {}
     }
     false
@@ -127,6 +131,7 @@ fn render(frame: &mut Frame, app: &App) {
 
 fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let t = app.t();
+    let c = app.theme_colors();
     let titles = vec![
         t.tab_service,
         t.tab_tools,
@@ -136,10 +141,10 @@ fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let selected = app.current_view().index();
     let tabs = Tabs::new(titles)
         .select(selected)
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(c.inactive))
         .highlight_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(c.primary)
                 .add_modifier(Modifier::BOLD),
         )
         .divider("|")
@@ -149,17 +154,18 @@ fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                 .title(t.app_title)
                 .title_style(
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(c.primary)
                         .add_modifier(Modifier::BOLD),
                 )
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(c.border)),
         );
     frame.render_widget(tabs, area);
 }
 
 fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let t = app.t();
-    let y = Style::default().fg(Color::Yellow);
+    let c = app.theme_colors();
+    let y = Style::default().fg(c.accent);
     let mut s: Vec<Span> = vec![
         Span::styled(format!(" ←→ {} ", t.hint_switch), y),
         Span::styled(format!("↑↓ {} ", t.hint_select), y),

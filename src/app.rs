@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::i18n::{Language, Translations, EN, ZH};
+use crate::theme::{ThemeColors, DARK, LIGHT};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
@@ -416,6 +417,21 @@ impl App {
 
     pub fn theme(&self) -> &str {
         &self.theme
+    }
+
+    pub fn theme_colors(&self) -> &'static ThemeColors {
+        match self.theme.as_str() {
+            "light" => &LIGHT,
+            _ => &DARK,
+        }
+    }
+
+    pub fn cycle_theme(&mut self) {
+        self.theme = match self.theme.as_str() {
+            "light" => "dark".to_string(),
+            _ => "light".to_string(),
+        };
+        save_settings(&self.settings_file, &self.language, &self.theme);
     }
 
     // ========== 其他 ==========

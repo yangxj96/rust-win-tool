@@ -1,5 +1,5 @@
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::Frame;
@@ -11,6 +11,7 @@ pub struct SettingsView;
 impl SettingsView {
     pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         let t = app.t();
+        let c = app.theme_colors();
         let chunks = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(0),
@@ -20,10 +21,10 @@ impl SettingsView {
         let header = Paragraph::new(t.settings_header)
             .style(
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(c.primary)
                     .add_modifier(Modifier::BOLD),
             )
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::DarkGray)));
+            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(c.border)));
         frame.render_widget(header, chunks[0]);
 
         let lang_value = app.language().name();
@@ -42,7 +43,7 @@ impl SettingsView {
             .enumerate()
             .map(|(i, (name, value))| {
                 let style = if i == app.settings_selected() {
-                    Style::default().bg(Color::DarkGray)
+                    Style::default().bg(c.bg_select)
                 } else {
                     Style::default()
                 };
@@ -62,7 +63,7 @@ impl SettingsView {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::DarkGray)),
+                    .border_style(Style::default().fg(c.border)),
             );
 
         frame.render_widget(list, chunks[1]);

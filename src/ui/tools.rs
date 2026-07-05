@@ -1,5 +1,5 @@
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::Frame;
@@ -11,6 +11,7 @@ pub struct ToolsView;
 impl ToolsView {
     pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         let t = app.t();
+        let c = app.theme_colors();
         let chunks = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(0),
@@ -20,10 +21,10 @@ impl ToolsView {
         let header = Paragraph::new(t.tools_header)
             .style(
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(c.primary)
                     .add_modifier(Modifier::BOLD),
             )
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::DarkGray)));
+            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(c.border)));
         frame.render_widget(header, chunks[0]);
 
         let tools = [
@@ -40,7 +41,7 @@ impl ToolsView {
             .enumerate()
             .map(|(i, (num, name, desc))| {
                 let style = if i == app.tools_selected() {
-                    Style::default().bg(Color::DarkGray)
+                    Style::default().bg(c.bg_select)
                 } else {
                     Style::default()
                 };
@@ -48,7 +49,7 @@ impl ToolsView {
                 ListItem::new(Line::from(vec![
                     Span::styled(
                         format!("  {}. ", num),
-                        Style::default().fg(Color::Yellow),
+                        Style::default().fg(c.accent),
                     ),
                     Span::styled(
                         *name,
@@ -56,7 +57,7 @@ impl ToolsView {
                     ),
                     Span::styled(
                         format!("  {}", desc),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(c.inactive),
                     ),
                 ]))
                 .style(style)
@@ -67,7 +68,7 @@ impl ToolsView {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::DarkGray)),
+                    .border_style(Style::default().fg(c.border)),
             );
 
         frame.render_widget(list, chunks[1]);
