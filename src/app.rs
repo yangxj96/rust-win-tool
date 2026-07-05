@@ -31,6 +31,12 @@ impl View {
     }
 }
 
+pub enum PendingAction {
+    StartService(String),
+    StopService(String),
+    RefreshAll,
+}
+
 pub struct App {
     current_view: View,
     managed_services: Vec<ManagedService>,
@@ -39,6 +45,7 @@ pub struct App {
     selected_service: Option<usize>,
     settings_selected: usize,
     tools_selected: usize,
+    pending_action: Option<PendingAction>,
     // 添加服务对话框
     show_add_dialog: bool,
     add_dialog_services: Vec<ServiceInfo>,
@@ -70,6 +77,7 @@ impl App {
             selected_service: selected,
             settings_selected: 0,
             tools_selected: 0,
+            pending_action: None,
             show_add_dialog: false,
             add_dialog_services: Vec::new(),
             add_dialog_filtered: Vec::new(),
@@ -117,15 +125,10 @@ impl App {
 
     pub fn refresh_statuses(&mut self) {
         for svc in &self.managed_services {
-            match app_service::get_service_status(&svc.name) {
-                Ok(status) => {
-                    self.service_statuses.insert(svc.name.clone(), status);
-                }
-                Err(_) => {
-                    self.service_statuses.insert(svc.name.clone(), "未知".to_string());
-                }
-            }
+            self.service_statuses
+                .insert(svc.name.clone(), "刷新中".to_string());
         }
+        self.pending_action = Some(PendingAction::RefreshAll);
     }
 
     pub fn remove_selected_service(&mut self) {
@@ -149,12 +152,7 @@ impl App {
             if idx < self.managed_services.len() {
                 let name = self.managed_services[idx].name.clone();
                 self.service_statuses.insert(name.clone(), "启动中".to_string());
-                let result = app_service::start_service(&name);
-                let status = match result {
-                    Ok(()) => app_service::get_service_status(&name).unwrap_or_else(|_| "未知".to_string()),
-                    Err(_) => app_service::get_service_status(&name).unwrap_or_else(|_| "未知".to_string()),
-                };
-                self.service_statuses.insert(name, status);
+                self.pending_action = Some(PendingAction::StartService(name));
             }
         }
     }
@@ -164,12 +162,35 @@ impl App {
             if idx < self.managed_services.len() {
                 let name = self.managed_services[idx].name.clone();
                 self.service_statuses.insert(name.clone(), "停止中".to_string());
-                let result = app_service::stop_service(&name);
-                let status = match result {
-                    Ok(()) => app_service::get_service_status(&name).unwrap_or_else(|_| "未知".to_string()),
-                    Err(_) => app_service::get_service_status(&name).unwrap_or_else(|_| "未知".to_string()),
-                };
+                self.pending_action = Some(PendingAction::StopService(name));
+            }
+        }
+    }
+
+    pub fn take_pending_action(&mut self) -> Option<PendingAction> {
+        self.pending_action.take()
+    }
+
+    pub fn execute_pending(&mut self, action: PendingAction) {
+        match action {
+            PendingAction::StartService(name) => {
+                let _ = app_service::start_service(&name);
+                let status = app_service::get_service_status(&name)
+                    .unwrap_or_else(|_| "未知".to_string());
                 self.service_statuses.insert(name, status);
+            }
+            PendingAction::StopService(name) => {
+                let _ = app_service::stop_service(&name);
+                let status = app_service::get_service_status(&name)
+                    .unwrap_or_else(|_| "未知".to_string());
+                self.service_statuses.insert(name, status);
+            }
+            PendingAction::RefreshAll => {
+                for svc in &self.managed_services {
+                    let status = app_service::get_service_status(&svc.name)
+                        .unwrap_or_else(|_| "未知".to_string());
+                    self.service_statuses.insert(svc.name.clone(), status);
+                }
             }
         }
     }

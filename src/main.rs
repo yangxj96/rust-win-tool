@@ -27,11 +27,15 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> io::Result
     loop {
         terminal.draw(|frame| render(frame, app))?;
 
+        if let Some(action) = app.take_pending_action() {
+            app.execute_pending(action);
+            terminal.draw(|frame| render(frame, app))?;
+        }
+
         if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press {
+            if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat {
                 let should_quit = if app.show_add_dialog() {
-                    handle_add_dialog_key(app, key.code);
-                    false
+                    handle_add_dialog_key(app, key.code)
                 } else {
                     handle_main_key(app, key.code)
                 };
@@ -43,16 +47,17 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> io::Result
     }
 }
 
-fn handle_add_dialog_key(app: &mut App, code: KeyCode) {
+fn handle_add_dialog_key(app: &mut App, code: KeyCode) -> bool {
     match code {
-        KeyCode::Esc => app.close_add_dialog(),
+        KeyCode::Esc | KeyCode::Char('q') => app.close_add_dialog(),
         KeyCode::Up | KeyCode::Char('k') => app.add_dialog_select_prev(),
         KeyCode::Down | KeyCode::Char('j') => app.add_dialog_select_next(),
         KeyCode::Enter => app.confirm_add_service(),
-        KeyCode::Char(c) => app.add_dialog_input(c),
         KeyCode::Backspace => app.add_dialog_backspace(),
+        KeyCode::Char(c) => app.add_dialog_input(c),
         _ => {}
     }
+    false
 }
 
 fn handle_main_key(app: &mut App, code: KeyCode) -> bool {
