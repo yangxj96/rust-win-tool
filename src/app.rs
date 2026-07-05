@@ -1,5 +1,8 @@
 use app_service::{ManagedService, ServiceError, ServiceInfo};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use crate::i18n::{Language, Translations, EN, ZH};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
@@ -43,6 +46,9 @@ pub struct App {
     service_statuses: std::collections::HashMap<String, String>,
     service_messages: std::collections::HashMap<String, String>,
     data_file: PathBuf,
+    settings_file: PathBuf,
+    language: Language,
+    theme: String,
     selected_service: Option<usize>,
     settings_selected: usize,
     tools_selected: usize,
@@ -57,12 +63,15 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
-        let data_file = dirs::data_dir()
+        let app_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("rust-win-tool")
-            .join("managed_services.json");
+            .join("rust-win-tool");
+
+        let data_file = app_dir.join("managed_services.json");
+        let settings_file = app_dir.join("settings.json");
 
         let managed_services = app_service::load_managed_services(&data_file);
+        let settings = load_settings(&settings_file);
 
         let selected = if managed_services.is_empty() {
             None
@@ -76,6 +85,9 @@ impl App {
             service_statuses: std::collections::HashMap::new(),
             service_messages: std::collections::HashMap::new(),
             data_file,
+            settings_file,
+            language: settings.language,
+            theme: settings.theme,
             selected_service: selected,
             settings_selected: 0,
             tools_selected: 0,
@@ -130,9 +142,10 @@ impl App {
     }
 
     pub fn refresh_statuses(&mut self) {
+        let msg = self.t().status_refreshing.to_string();
         for svc in &self.managed_services {
             self.service_statuses
-                .insert(svc.name.clone(), "刷新中".to_string());
+                .insert(svc.name.clone(), msg.clone());
         }
         self.pending_action = Some(PendingAction::RefreshAll);
     }
@@ -157,7 +170,8 @@ impl App {
         if let Some(idx) = self.selected_service {
             if idx < self.managed_services.len() {
                 let name = self.managed_services[idx].name.clone();
-                self.service_statuses.insert(name.clone(), "启动中".to_string());
+                let msg = self.t().status_starting.to_string();
+                self.service_statuses.insert(name.clone(), msg);
                 self.pending_action = Some(PendingAction::StartService(name));
             }
         }
@@ -167,7 +181,8 @@ impl App {
         if let Some(idx) = self.selected_service {
             if idx < self.managed_services.len() {
                 let name = self.managed_services[idx].name.clone();
-                self.service_statuses.insert(name.clone(), "停止中".to_string());
+                let msg = self.t().status_stopping.to_string();
+                self.service_statuses.insert(name.clone(), msg);
                 self.pending_action = Some(PendingAction::StopService(name));
             }
         }
@@ -178,12 +193,13 @@ impl App {
     }
 
     pub fn execute_pending(&mut self, action: PendingAction) {
+        let lang = self.language;
         match action {
             PendingAction::StartService(name) => {
                 match app_service::start_service(&name) {
                     Ok(()) => { self.service_messages.remove(&name); }
                     Err(e) => {
-                        self.service_messages.insert(name.clone(), map_error(&e));
+                        self.service_messages.insert(name.clone(), map_error(&e, lang));
                     }
                 }
                 let status = app_service::get_service_status(&name)
@@ -194,7 +210,7 @@ impl App {
                 match app_service::stop_service(&name) {
                     Ok(()) => { self.service_messages.remove(&name); }
                     Err(e) => {
-                        self.service_messages.insert(name.clone(), map_error(&e));
+                        self.service_messages.insert(name.clone(), map_error(&e, lang));
                     }
                 }
                 let status = app_service::get_service_status(&name)
@@ -380,6 +396,28 @@ impl App {
         }
     }
 
+    // ========== 翻译与设置 ==========
+
+    pub fn t(&self) -> &'static Translations {
+        match self.language {
+            Language::Chinese => &ZH,
+            Language::English => &EN,
+        }
+    }
+
+    pub fn language(&self) -> Language {
+        self.language
+    }
+
+    pub fn cycle_language(&mut self) {
+        self.language = self.language.next();
+        save_settings(&self.settings_file, &self.language, &self.theme);
+    }
+
+    pub fn theme(&self) -> &str {
+        &self.theme
+    }
+
     // ========== 其他 ==========
 
     pub fn settings_selected(&self) -> usize {
@@ -391,26 +429,65 @@ impl App {
     }
 }
 
-fn map_error(e: &ServiceError) -> String {
+fn map_error(e: &ServiceError, lang: Language) -> String {
+    let t = match lang {
+        Language::Chinese => &ZH,
+        Language::English => &EN,
+    };
     let detail = match e {
         ServiceError::StartFailed(d)
         | ServiceError::StopFailed(d)
         | ServiceError::CommandFailed(d)
         | ServiceError::ParseFailed(d) => d.as_str(),
-        ServiceError::NotFound(_) => return "服务不存在".to_string(),
+        ServiceError::NotFound(_) => return t.err_not_found.to_string(),
     };
     let lower = detail.to_lowercase();
     if lower.contains("access is denied") || lower.contains("access denied") {
-        "权限不足".to_string()
+        t.err_permission.to_string()
     } else if lower.contains("already running") || lower.contains("already started") {
-        "服务已在运行".to_string()
+        t.err_running.to_string()
     } else if lower.contains("not started") || lower.contains("has not been started") {
-        "服务未启动".to_string()
+        t.err_not_started.to_string()
     } else if lower.contains("cannot be stopped") || lower.contains("can not be stopped") {
-        "服务不可停止".to_string()
+        t.err_cannot_stop.to_string()
     } else if lower.contains("timeout") {
-        "操作超时".to_string()
+        t.err_timeout.to_string()
     } else {
-        "操作失败".to_string()
+        t.err_failed.to_string()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct AppSettings {
+    language: Language,
+    theme: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            language: Language::Chinese,
+            theme: "dark".to_string(),
+        }
+    }
+}
+
+fn load_settings(path: &PathBuf) -> AppSettings {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_settings(path: &PathBuf, language: &Language, theme: &str) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let settings = AppSettings {
+        language: *language,
+        theme: theme.to_string(),
+    };
+    if let Ok(json) = serde_json::to_string_pretty(&settings) {
+        let _ = std::fs::write(path, json);
     }
 }

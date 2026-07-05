@@ -7,6 +7,7 @@ use ratatui::Frame;
 use std::io;
 
 mod app;
+mod i18n;
 mod ui;
 
 use app::{App, View};
@@ -94,7 +95,9 @@ fn handle_main_key(app: &mut App, code: KeyCode) -> bool {
                 app.refresh_statuses();
             }
         }
-        KeyCode::Enter => {}
+        KeyCode::Enter if *app.current_view() == View::Settings && app.settings_selected() == 0 => {
+            app.cycle_language();
+        }
         _ => {}
     }
     false
@@ -123,10 +126,11 @@ fn render(frame: &mut Frame, app: &App) {
 }
 
 fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
+    let t = app.t();
     let titles = vec![
-        " 服务管理 ",
-        " 系统工具 ",
-        " 设置 ",
+        t.tab_service,
+        t.tab_tools,
+        t.tab_settings,
     ];
 
     let selected = app.current_view().index();
@@ -142,7 +146,7 @@ fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Rust 系统工具 ")
+                .title(t.app_title)
                 .title_style(
                     Style::default()
                         .fg(Color::Cyan)
@@ -154,25 +158,26 @@ fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
 }
 
 fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
+    let t = app.t();
     let y = Style::default().fg(Color::Yellow);
     let mut s: Vec<Span> = vec![
-        Span::styled(" ←→ 切换 ", y),
-        Span::styled("↑↓ 选择 ", y),
+        Span::styled(format!(" ←→ {} ", t.hint_switch), y),
+        Span::styled(format!("↑↓ {} ", t.hint_select), y),
     ];
 
     match app.current_view() {
         View::Service => {
-            s.push(Span::styled("a 添加 ", y));
-            s.push(Span::styled("d 删除 ", y));
-            s.push(Span::styled("s 启动 ", y));
-            s.push(Span::styled("p 停止 ", y));
-            s.push(Span::styled("r 刷新 ", y));
+            s.push(Span::styled(format!("a {} ", t.hint_add), y));
+            s.push(Span::styled(format!("d {} ", t.hint_delete), y));
+            s.push(Span::styled(format!("s {} ", t.hint_start), y));
+            s.push(Span::styled(format!("p {} ", t.hint_stop), y));
+            s.push(Span::styled(format!("r {} ", t.hint_refresh), y));
         }
         View::Settings | View::Tools => {
-            s.push(Span::styled("Enter 确认 ", y));
+            s.push(Span::styled(format!("Enter {} ", t.hint_confirm), y));
         }
     }
-    s.push(Span::styled("q 退出", y));
+    s.push(Span::styled(format!("q {}", t.hint_quit), y));
 
     frame.render_widget(Paragraph::new(Line::from(s)), area);
 }

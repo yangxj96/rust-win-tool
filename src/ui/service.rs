@@ -10,19 +10,19 @@ pub struct ServiceView;
 
 impl ServiceView {
     pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+        let t = app.t();
         let chunks = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(0),
         ])
         .split(area);
 
-        // 顶部信息栏
         let count = app.managed_services().len();
         let selected_info = match app.selected_service() {
-            Some(idx) => format!("  选中: {}/{}", idx + 1, count),
-            None => "  未选择".to_string(),
+            Some(idx) => format!("  {}: {}/{}", t.svc_selected, idx + 1, count),
+            None => format!("  {}: {}", t.svc_selected, t.svc_none),
         };
-        let header = Paragraph::new(format!("服务管理 ({}){}", count, selected_info))
+        let header = Paragraph::new(format!("{} ({}){}", t.svc_header, count, selected_info))
             .style(
                 Style::default()
                     .fg(Color::Cyan)
@@ -35,9 +35,8 @@ impl ServiceView {
             );
         frame.render_widget(header, chunks[0]);
 
-        // 服务表格
         if app.managed_services().is_empty() {
-            let empty_msg = Paragraph::new("  暂无管理的服务，按 a 添加服务")
+            let empty_msg = Paragraph::new(t.svc_empty)
                 .style(Style::default().fg(Color::DarkGray))
                 .block(
                     Block::default()
@@ -53,13 +52,13 @@ impl ServiceView {
                 .map(|(i, svc)| {
                     let status = app.service_status(&svc.name);
                     let status_style = match status {
-                        "Running" | "运行中" => Style::default().fg(Color::Green),
-                        "Stopped" | "已停止" => Style::default().fg(Color::Red),
+                        "Running" => Style::default().fg(Color::Green),
+                        "Stopped" => Style::default().fg(Color::Red),
                         _ => Style::default().fg(Color::Yellow),
                     };
                     let status_text = match status {
-                        "Running" => "运行中",
-                        "Stopped" => "已停止",
+                        "Running" => t.status_running,
+                        "Stopped" => t.status_stopped,
                         other => other,
                     };
                     let msg = app.service_message(&svc.name);
@@ -96,25 +95,25 @@ impl ServiceView {
             )
             .header(Row::new(vec![
                 Cell::from(Span::styled(
-                    "服务名称",
+                    t.col_name,
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 )),
                 Cell::from(Span::styled(
-                    "显示名称",
+                    t.col_display,
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 )),
                 Cell::from(Span::styled(
-                    "状态",
+                    t.col_status,
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 )),
                 Cell::from(Span::styled(
-                    "消息",
+                    t.col_message,
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
@@ -129,7 +128,6 @@ impl ServiceView {
             frame.render_widget(table, chunks[1]);
         }
 
-        // 渲染添加服务对话框
         if app.show_add_dialog() {
             render_add_dialog(frame, area, app);
         }
@@ -137,24 +135,22 @@ impl ServiceView {
 }
 
 fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
-    // 居中弹出框
+    let t = app.t();
     let popup_area = centered_rect(70, 70, area);
 
-    // 清除背景
     frame.render_widget(Clear, popup_area);
 
     let inner_chunks = Layout::vertical([
-        Constraint::Length(3),  // 搜索框
-        Constraint::Min(0),    // 服务列表
-        Constraint::Length(1), // 提示
+        Constraint::Length(3),
+        Constraint::Min(0),
+        Constraint::Length(1),
     ])
     .margin(1)
     .split(popup_area);
 
-    // 对话框边框
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" 添加服务 ")
+        .title(format!(" {} ", t.dialog_add_title))
         .title_style(
             Style::default()
                 .fg(Color::Cyan)
@@ -163,8 +159,7 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
         .border_style(Style::default().fg(Color::Cyan));
     frame.render_widget(block, popup_area);
 
-    // 搜索框
-    let search_text = format!(" 搜索: {}", app.add_dialog_search());
+    let search_text = format!(" {}: {}", t.dialog_search, app.add_dialog_search());
     let search_box = Paragraph::new(search_text)
         .style(Style::default().fg(Color::White))
         .block(
@@ -174,12 +169,11 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
         );
     frame.render_widget(search_box, inner_chunks[0]);
 
-    // 服务列表
     let filtered = app.add_dialog_filtered();
     let all_services = app.add_dialog_services();
 
     if filtered.is_empty() {
-        let empty_msg = Paragraph::new("  没有匹配的服务")
+        let empty_msg = Paragraph::new(t.dialog_empty)
             .style(Style::default().fg(Color::DarkGray))
             .block(
                 Block::default()
@@ -199,8 +193,8 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
                     _ => Style::default().fg(Color::Yellow),
                 };
                 let status_text = match svc.status.as_str() {
-                    "Running" => "运行中",
-                    "Stopped" => "已停止",
+                    "Running" => t.status_running,
+                    "Stopped" => t.status_stopped,
                     other => other,
                 };
 
@@ -229,19 +223,19 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
         )
         .header(Row::new(vec![
             Cell::from(Span::styled(
-                "服务名称",
+                t.col_name,
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )),
             Cell::from(Span::styled(
-                "显示名称",
+                t.col_display,
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )),
             Cell::from(Span::styled(
-                "状态",
+                t.col_status,
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
@@ -256,14 +250,13 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(table, inner_chunks[1]);
     }
 
-    // 底部提示
     let hint = Line::from(vec![
         Span::styled(" Enter", Style::default().fg(Color::Yellow)),
-        Span::raw(" 添加 "),
+        Span::raw(format!(" {} ", t.dialog_hint_add)),
         Span::styled("Esc", Style::default().fg(Color::Yellow)),
-        Span::raw(" 取消 "),
+        Span::raw(format!(" {} ", t.dialog_hint_cancel)),
         Span::styled("↑↓", Style::default().fg(Color::Yellow)),
-        Span::raw(" 选择 "),
+        Span::raw(format!(" {} ", t.hint_select)),
         Span::styled(
             format!(" {}/{}", app.add_dialog_selected() + 1, filtered.len()),
             Style::default().fg(Color::DarkGray),

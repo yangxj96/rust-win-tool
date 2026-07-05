@@ -10,14 +10,14 @@ pub struct SettingsView;
 
 impl SettingsView {
     pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+        let t = app.t();
         let chunks = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(0),
         ])
         .split(area);
 
-        // 顶部信息栏
-        let header = Paragraph::new("设置")
+        let header = Paragraph::new(t.settings_header)
             .style(
                 Style::default()
                     .fg(Color::Cyan)
@@ -26,11 +26,15 @@ impl SettingsView {
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::DarkGray)));
         frame.render_widget(header, chunks[0]);
 
-        // 设置列表
+        let lang_value = app.language().name();
+        let theme_value = match app.theme() {
+            "light" => t.theme_light,
+            _ => t.theme_dark,
+        };
+
         let items = [
-            ("主题切换", "深色模式"),
-            ("语言选择", "简体中文"),
-            ("通知设置", "启用"),
+            (t.setting_language, lang_value),
+            (t.setting_theme, theme_value),
         ];
 
         let list_items: Vec<ListItem> = items
