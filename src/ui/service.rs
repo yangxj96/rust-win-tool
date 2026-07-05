@@ -70,7 +70,7 @@ impl ServiceView {
                     };
 
                     let row_style = if Some(i) == app.selected_service() {
-                        Style::default().bg(c.bg_select)
+                        Style::default().fg(c.fg_select).bg(c.bg_select)
                     } else {
                         Style::default()
                     };
@@ -201,7 +201,7 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
                 };
 
                 let row_style = if i == app.add_dialog_selected() {
-                    Style::default().bg(c.bg_select)
+                    Style::default().fg(c.fg_select).bg(c.bg_select)
                 } else {
                     Style::default()
                 };

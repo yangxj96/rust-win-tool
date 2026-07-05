@@ -41,7 +41,7 @@ impl ToolsView {
             .enumerate()
             .map(|(i, (num, name, desc))| {
                 let style = if i == app.tools_selected() {
-                    Style::default().bg(c.bg_select)
+                    Style::default().fg(c.fg_select).bg(c.bg_select)
                 } else {
                     Style::default()
                 };
