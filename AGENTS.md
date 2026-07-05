@@ -19,13 +19,16 @@ cargo test
 ```
 ├── Cargo.toml                  # Workspace root, all deps declared here
 ├── src/
-│   ├── main.rs                 # TUI entrypoint
-│   ├── app.rs                  # Application state management
+│   ├── main.rs                 # TUI entrypoint, event loop, rendering
+│   ├── app.rs                  # Application state, View enum, business logic
+│   ├── i18n.rs                 # Internationalization (Language, Translations, ZH/EN)
+│   ├── theme.rs                # Theme colors (ThemeColors, DARK/LIGHT)
 │   └── ui/                     # UI modules
 │       ├── mod.rs              # UI module declarations
-│       ├── service.rs          # Service management TUI
-│       ├── settings.rs         # Settings TUI
-│       └── tools.rs            # Tools collection TUI
+│       ├── service.rs          # Service management view + add dialog
+│       ├── tools.rs            # Tools list + system info detail view
+│       ├── scripts.rs          # Scripts list + Navicat cleanup (winreg)
+│       └── settings.rs         # Settings view (language/theme switching)
 └── lib/                        # Feature crates
     ├── core/                   # App config, error types
     ├── utils/                  # UUID, timestamps
@@ -35,34 +38,49 @@ cargo test
 ## Architecture
 
 - TUI frontend (`src/ui/`) → App state (`src/app.rs`) → lib crates (`lib/`)
-- Uses ratatui for terminal UI rendering
-- Uses crossterm for terminal input handling
-- Add new UI modules in `src/ui/`
-- Add new lib crates in `lib/`, add path dep in `Cargo.toml`
-
-## Windows Service Management
-
-- `app-service` crate uses hidden PowerShell (`CREATE_NO_WINDOW`) to call `Get-Service`/`Start-Service`/`Stop-Service`
-- No UAC elevation by default — if permission denied, user can restart app as admin
-- Managed services persisted to `%APPDATA%/rust-win-tool/managed_services.json`
+- Uses ratatui for terminal UI rendering, crossterm for terminal input
+- i18n: `src/i18n.rs` defines `Translations` struct with `ZH`/`EN` static instances; access via `app.t()`
+- Theme: `src/theme.rs` defines `ThemeColors` struct with `DARK`/`LIGHT` static instances; access via `app.theme_colors()`
+- Scripts: `src/ui/scripts.rs` uses `winreg` crate for direct registry operations (no batch files)
+- System info: PowerShell `Get-CimInstance` with UTF8 encoding for Chinese support
 
 ## TUI Navigation
 
-- ←/→: Switch view (Service / Settings / Tools)
-- ↑/↓: Select item
+### Tab Views
+- ←/→ or h/l: Switch view (服务管理 | 系统工具 | 执行脚本 | 设置)
+
+### 服务管理 (Service)
+- ↑/↓ or k/j: Select service
 - a: Add service (open dialog)
 - d: Delete selected service
 - s: Start selected service
+- S: Start all services
 - p: Stop selected service
-- r: Refresh service status
-- Enter: Confirm / Execute
-- Esc: Close dialog
+- P: Stop all services
+- r: Refresh all service statuses
+- Enter: Confirm (in dialog)
+
+### 系统工具 (Tools)
+- ↑/↓: Select tool
+- Enter: Open tool detail (system info)
+- Esc: Return to tools list
+
+### 执行脚本 (Scripts)
+- ↑/↓: Select script
+- Enter: Execute selected script
+
+### 设置 (Settings)
+- ↑/↓: Select setting
+- Enter: Toggle language (index 0) / Toggle theme (index 1)
+
+### Global
 - q: Quit application
+- Esc: Close dialog / Return from detail view
 
-## Rust Notes
+## Key Dependencies
 
-- `Cargo.toml` is the workspace root — all deps declared there
-- Lib crates use `thiserror` for error types, `serde` for serialization
-- `app-service` depends on `base64` crate for `-EncodedCommand` encoding
-- Uses ratatui 0.30 and crossterm 0.29 for TUI
-
+- `ratatui` 0.30 + `crossterm` 0.29 — TUI rendering and input
+- `winreg` 0.55 — Windows registry operations (scripts)
+- `unicode-width` 0.2 — CJK character width calculation for alignment
+- `serde` / `serde_json` — JSON serialization (settings, PowerShell output)
+- `app-service` — PowerShell-based Windows service management
