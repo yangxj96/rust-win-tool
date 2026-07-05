@@ -2,7 +2,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
 use ratatui::Frame;
 use std::io;
 
@@ -29,71 +29,88 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> io::Result
 
         if let Event::Key(key) = event::read()? {
             if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('1') => app.set_view(View::Service),
-                    KeyCode::Char('2') => app.set_view(View::Settings),
-                    KeyCode::Char('3') => app.set_view(View::Tools),
-                    KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
-                    KeyCode::Down | KeyCode::Char('j') => app.select_next(),
-                    KeyCode::Char('a') => {
-                        if *app.current_view() == View::Service {
-                            app.load_services().ok();
-                            app.set_show_add_dialog(true);
-                            app.set_status_message(
-                                "添加服务功能开发中...".to_string(),
-                                MsgType::Info,
-                            );
-                        }
-                    }
-                    KeyCode::Char('d') => {
-                        if *app.current_view() == View::Service {
-                            app.remove_selected_service();
-                        }
-                    }
-                    KeyCode::Char('s') => {
-                        if *app.current_view() == View::Service {
-                            app.start_selected_service();
-                        }
-                    }
-                    KeyCode::Char('p') => {
-                        if *app.current_view() == View::Service {
-                            app.stop_selected_service();
-                        }
-                    }
-                    KeyCode::Char('r') => {
-                        if *app.current_view() == View::Service {
-                            app.refresh_statuses();
-                        }
-                    }
-                    KeyCode::Enter => {
-                        match app.current_view() {
-                            View::Tools => {
-                                let tools = [
-                                    "系统信息", "磁盘清理", "网络诊断",
-                                    "进程管理", "注册表编辑器", "事件查看器",
-                                ];
-                                let idx = app.tools_selected();
-                                app.set_status_message(
-                                    format!("工具 \"{}\" 功能开发中...", tools[idx]),
-                                    MsgType::Info,
-                                );
-                            }
-                            View::Settings => {
-                                let settings = ["主题切换", "语言选择", "通知设置"];
-                                let idx = app.settings_selected();
-                                app.set_status_message(
-                                    format!("设置 \"{}\" 功能开发中...", settings[idx]),
-                                    MsgType::Info,
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
+                // 对话框打开时，路由到对话框处理
+                if app.show_add_dialog() {
+                    handle_add_dialog_key(app, key.code);
+                } else {
+                    handle_main_key(app, key.code);
                 }
             }
         }
+    }
+}
+
+fn handle_add_dialog_key(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Esc => app.close_add_dialog(),
+        KeyCode::Up | KeyCode::Char('k') => app.add_dialog_select_prev(),
+        KeyCode::Down | KeyCode::Char('j') => app.add_dialog_select_next(),
+        KeyCode::Enter => app.confirm_add_service(),
+        KeyCode::Char(c) => app.add_dialog_input(c),
+        KeyCode::Backspace => app.add_dialog_backspace(),
+        _ => {}
+    }
+}
+
+fn handle_main_key(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Char('q') => {
+            std::process::exit(0);
+        }
+        KeyCode::Left | KeyCode::Char('h') => app.prev_view(),
+        KeyCode::Right | KeyCode::Char('l') => app.next_view(),
+        KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
+        KeyCode::Down | KeyCode::Char('j') => app.select_next(),
+        KeyCode::Char('a') => {
+            if *app.current_view() == View::Service {
+                app.open_add_dialog();
+            }
+        }
+        KeyCode::Char('d') => {
+            if *app.current_view() == View::Service {
+                app.remove_selected_service();
+            }
+        }
+        KeyCode::Char('s') => {
+            if *app.current_view() == View::Service {
+                app.start_selected_service();
+            }
+        }
+        KeyCode::Char('p') => {
+            if *app.current_view() == View::Service {
+                app.stop_selected_service();
+            }
+        }
+        KeyCode::Char('r') => {
+            if *app.current_view() == View::Service {
+                app.refresh_statuses();
+            }
+        }
+        KeyCode::Enter => {
+            match app.current_view() {
+                View::Tools => {
+                    let tools = [
+                        "系统信息", "磁盘清理", "网络诊断",
+                        "进程管理", "注册表编辑器", "事件查看器",
+                    ];
+                    let idx = app.tools_selected();
+                    app.set_status_message(
+                        format!("工具 \"{}\" 功能开发中...", tools[idx]),
+                        MsgType::Info,
+                    );
+                }
+                View::Settings => {
+                    let settings = ["主题切换", "语言选择", "通知设置"];
+                    let idx = app.settings_selected();
+                    app.set_status_message(
+                        format!("设置 \"{}\" 功能开发中...", settings[idx]),
+                        MsgType::Info,
+                    );
+                }
+                _ => {}
+            }
+        }
+        _ => {}
     }
 }
 
@@ -105,15 +122,8 @@ fn render(frame: &mut Frame, app: &App) {
     ])
     .split(frame.area());
 
-    // 标题栏
-    let title = Paragraph::new("  Rust 系统工具")
-        .style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::DarkGray)));
-    frame.render_widget(title, chunks[0]);
+    // 标题栏 - Tab式显示
+    render_title_bar(frame, chunks[0], app);
 
     // 主内容区
     match app.current_view() {
@@ -126,13 +136,48 @@ fn render(frame: &mut Frame, app: &App) {
     render_status_bar(frame, chunks[2], app);
 }
 
+fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
+    let titles = vec![
+        Span::styled(" 服务管理 ", Style::default().fg(Color::White)),
+        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" 设置 ", Style::default().fg(Color::White)),
+        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" 系统工具 ", Style::default().fg(Color::White)),
+    ];
+
+    let selected = app.current_view().index();
+    let tabs = Tabs::new(titles)
+        .select(selected)
+        .style(Style::default().fg(Color::DarkGray))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .divider("|")
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Rust 系统工具 ")
+                .title_style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
+    frame.render_widget(tabs, area);
+}
+
 fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let inner_chunks = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
 
     // 操作指引
     let help = match app.current_view() {
         View::Service => Line::from(vec![
-            Span::styled(" ↑↓", Style::default().fg(Color::Yellow)),
+            Span::styled(" ←→", Style::default().fg(Color::Yellow)),
+            Span::raw(" 切换 "),
+            Span::styled("↑↓", Style::default().fg(Color::Yellow)),
             Span::raw(" 选择 "),
             Span::styled("a", Style::default().fg(Color::Yellow)),
             Span::raw(" 添加 "),
@@ -144,28 +189,26 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
             Span::raw(" 停止 "),
             Span::styled("r", Style::default().fg(Color::Yellow)),
             Span::raw(" 刷新 "),
-            Span::styled("123", Style::default().fg(Color::Yellow)),
-            Span::raw(" 切换 "),
             Span::styled("q", Style::default().fg(Color::Yellow)),
             Span::raw(" 退出"),
         ]),
         View::Settings => Line::from(vec![
-            Span::styled(" ↑↓", Style::default().fg(Color::Yellow)),
+            Span::styled(" ←→", Style::default().fg(Color::Yellow)),
+            Span::raw(" 切换 "),
+            Span::styled("↑↓", Style::default().fg(Color::Yellow)),
             Span::raw(" 选择 "),
             Span::styled("Enter", Style::default().fg(Color::Yellow)),
             Span::raw(" 确认 "),
-            Span::styled("123", Style::default().fg(Color::Yellow)),
-            Span::raw(" 切换 "),
             Span::styled("q", Style::default().fg(Color::Yellow)),
             Span::raw(" 退出"),
         ]),
         View::Tools => Line::from(vec![
-            Span::styled(" ↑↓", Style::default().fg(Color::Yellow)),
+            Span::styled(" ←→", Style::default().fg(Color::Yellow)),
+            Span::raw(" 切换 "),
+            Span::styled("↑↓", Style::default().fg(Color::Yellow)),
             Span::raw(" 选择 "),
             Span::styled("Enter", Style::default().fg(Color::Yellow)),
             Span::raw(" 执行 "),
-            Span::styled("123", Style::default().fg(Color::Yellow)),
-            Span::raw(" 切换 "),
             Span::styled("q", Style::default().fg(Color::Yellow)),
             Span::raw(" 退出"),
         ]),
@@ -186,11 +229,12 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
             MsgType::Info => (Style::default().fg(Color::Yellow), "ℹ "),
         }
     };
-    let msg_line = Line::from(vec![
-        Span::styled(format!(" {}{}", prefix, msg), msg_style),
-    ]);
-    let msg_bar = Paragraph::new(msg_line)
-        .style(Style::default().fg(Color::DarkGray))
-        .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM));
+    let msg_line = Line::from(vec![Span::styled(
+        format!(" {}{}", prefix, msg),
+        msg_style,
+    )]);
+    let msg_bar = Paragraph::new(msg_line).style(Style::default().fg(Color::DarkGray)).block(
+        Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM),
+    );
     frame.render_widget(msg_bar, inner_chunks[1]);
 }

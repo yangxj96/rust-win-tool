@@ -8,6 +8,37 @@ pub enum View {
     Tools,
 }
 
+impl View {
+    pub fn all() -> &'static [View] {
+        &[View::Service, View::Settings, View::Tools]
+    }
+
+    pub fn index(&self) -> usize {
+        match self {
+            View::Service => 0,
+            View::Settings => 1,
+            View::Tools => 2,
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            0 => View::Service,
+            1 => View::Settings,
+            2 => View::Tools,
+            _ => View::Service,
+        }
+    }
+
+    pub fn title(&self) -> &str {
+        match self {
+            View::Service => "服务管理",
+            View::Settings => "设置",
+            View::Tools => "系统工具",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum MsgType {
     Success,
@@ -22,15 +53,16 @@ pub struct App {
     service_statuses: std::collections::HashMap<String, String>,
     data_file: PathBuf,
     selected_service: Option<usize>,
-    show_add_dialog: bool,
-    show_edit_dialog: bool,
-    search_query: String,
-    edit_form: Option<ManagedService>,
     status_message: String,
     status_message_type: MsgType,
     settings_selected: usize,
     tools_selected: usize,
-    needs_refresh: bool,
+    // 添加服务对话框
+    show_add_dialog: bool,
+    add_dialog_services: Vec<ServiceInfo>,
+    add_dialog_filtered: Vec<usize>,
+    add_dialog_selected: usize,
+    add_dialog_search: String,
 }
 
 impl App {
@@ -55,32 +87,42 @@ impl App {
             service_statuses: std::collections::HashMap::new(),
             data_file,
             selected_service: selected,
-            show_add_dialog: false,
-            show_edit_dialog: false,
-            search_query: String::new(),
-            edit_form: None,
             status_message: String::new(),
             status_message_type: MsgType::Info,
             settings_selected: 0,
             tools_selected: 0,
-            needs_refresh: true,
+            show_add_dialog: false,
+            add_dialog_services: Vec::new(),
+            add_dialog_filtered: Vec::new(),
+            add_dialog_selected: 0,
+            add_dialog_search: String::new(),
         }
     }
+
+    // ========== 视图切换 ==========
 
     pub fn current_view(&self) -> &View {
         &self.current_view
     }
 
-    pub fn set_view(&mut self, view: View) {
-        self.current_view = view;
+    pub fn prev_view(&mut self) {
+        let views = View::all();
+        let idx = self.current_view.index();
+        let new_idx = if idx == 0 { views.len() - 1 } else { idx - 1 };
+        self.current_view = View::from_index(new_idx);
     }
+
+    pub fn next_view(&mut self) {
+        let views = View::all();
+        let idx = self.current_view.index();
+        let new_idx = (idx + 1) % views.len();
+        self.current_view = View::from_index(new_idx);
+    }
+
+    // ========== 服务列表 ==========
 
     pub fn managed_services(&self) -> &[ManagedService] {
         &self.managed_services
-    }
-
-    pub fn all_services(&self) -> &[ServiceInfo] {
-        &self.all_services
     }
 
     pub fn service_status(&self, name: &str) -> &str {
@@ -94,88 +136,6 @@ impl App {
         self.selected_service
     }
 
-    pub fn set_selected_service(&mut self, index: Option<usize>) {
-        self.selected_service = index;
-    }
-
-    pub fn show_add_dialog(&self) -> bool {
-        self.show_add_dialog
-    }
-
-    pub fn set_show_add_dialog(&mut self, show: bool) {
-        self.show_add_dialog = show;
-    }
-
-    pub fn show_edit_dialog(&self) -> bool {
-        self.show_edit_dialog
-    }
-
-    pub fn set_show_edit_dialog(&mut self, show: bool) {
-        self.show_edit_dialog = show;
-    }
-
-    pub fn search_query(&self) -> &str {
-        &self.search_query
-    }
-
-    pub fn set_search_query(&mut self, query: String) {
-        self.search_query = query;
-    }
-
-    pub fn edit_form(&self) -> Option<&ManagedService> {
-        self.edit_form.as_ref()
-    }
-
-    pub fn set_edit_form(&mut self, form: Option<ManagedService>) {
-        self.edit_form = form;
-    }
-
-    pub fn status_message(&self) -> &str {
-        &self.status_message
-    }
-
-    pub fn status_message_type(&self) -> &MsgType {
-        &self.status_message_type
-    }
-
-    pub fn set_status_message(&mut self, msg: String, msg_type: MsgType) {
-        self.status_message = msg;
-        self.status_message_type = msg_type;
-    }
-
-    pub fn clear_status_message(&mut self) {
-        self.status_message.clear();
-    }
-
-    pub fn settings_selected(&self) -> usize {
-        self.settings_selected
-    }
-
-    pub fn set_settings_selected(&mut self, index: usize) {
-        self.settings_selected = index;
-    }
-
-    pub fn tools_selected(&self) -> usize {
-        self.tools_selected
-    }
-
-    pub fn set_tools_selected(&mut self, index: usize) {
-        self.tools_selected = index;
-    }
-
-    pub fn needs_refresh(&self) -> bool {
-        self.needs_refresh
-    }
-
-    pub fn set_needs_refresh(&mut self, needs: bool) {
-        self.needs_refresh = needs;
-    }
-
-    pub fn load_services(&mut self) -> Result<(), String> {
-        self.all_services = app_service::list_all_services().map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
     pub fn refresh_statuses(&mut self) {
         for svc in &self.managed_services {
             let status = app_service::get_service_status(&svc.name)
@@ -183,24 +143,6 @@ impl App {
             self.service_statuses.insert(svc.name.clone(), status);
         }
         self.set_status_message("服务状态已刷新".to_string(), MsgType::Success);
-    }
-
-    pub fn add_service(&mut self, name: String, display_name: String) {
-        if !self.managed_services.iter().any(|s| s.name == name) {
-            self.managed_services.push(ManagedService {
-                name: name.clone(),
-                display_name,
-                enabled: true,
-            });
-            app_service::save_managed_services(&self.data_file, &self.managed_services);
-            if self.selected_service.is_none() {
-                self.selected_service = Some(0);
-            }
-            self.set_status_message(
-                format!("已添加服务: {}", name),
-                MsgType::Success,
-            );
-        }
     }
 
     pub fn remove_selected_service(&mut self) {
@@ -237,10 +179,7 @@ impl App {
                         self.service_statuses.insert(name, status);
                     }
                     Err(e) => {
-                        self.set_status_message(
-                            format!("启动失败: {}", e),
-                            MsgType::Error,
-                        );
+                        self.set_status_message(format!("启动失败: {}", e), MsgType::Error);
                     }
                 }
             }
@@ -264,10 +203,7 @@ impl App {
                         self.service_statuses.insert(name, status);
                     }
                     Err(e) => {
-                        self.set_status_message(
-                            format!("停止失败: {}", e),
-                            MsgType::Error,
-                        );
+                        self.set_status_message(format!("停止失败: {}", e), MsgType::Error);
                     }
                 }
             }
@@ -275,6 +211,131 @@ impl App {
             self.set_status_message("请先选择一个服务".to_string(), MsgType::Info);
         }
     }
+
+    // ========== 添加服务对话框 ==========
+
+    pub fn show_add_dialog(&self) -> bool {
+        self.show_add_dialog
+    }
+
+    pub fn add_dialog_services(&self) -> &[ServiceInfo] {
+        &self.add_dialog_services
+    }
+
+    pub fn add_dialog_filtered(&self) -> &[usize] {
+        &self.add_dialog_filtered
+    }
+
+    pub fn add_dialog_selected(&self) -> usize {
+        self.add_dialog_selected
+    }
+
+    pub fn add_dialog_search(&self) -> &str {
+        &self.add_dialog_search
+    }
+
+    pub fn open_add_dialog(&mut self) {
+        match app_service::list_all_services() {
+            Ok(services) => {
+                self.add_dialog_services = services;
+                self.add_dialog_search.clear();
+                self.add_dialog_selected = 0;
+                self.rebuild_add_dialog_filter();
+                self.show_add_dialog = true;
+            }
+            Err(e) => {
+                self.set_status_message(format!("加载服务列表失败: {}", e), MsgType::Error);
+            }
+        }
+    }
+
+    pub fn close_add_dialog(&mut self) {
+        self.show_add_dialog = false;
+        self.add_dialog_services.clear();
+        self.add_dialog_filtered.clear();
+        self.add_dialog_search.clear();
+        self.add_dialog_selected = 0;
+    }
+
+    pub fn add_dialog_input(&mut self, c: char) {
+        self.add_dialog_search.push(c);
+        self.add_dialog_selected = 0;
+        self.rebuild_add_dialog_filter();
+    }
+
+    pub fn add_dialog_backspace(&mut self) {
+        self.add_dialog_search.pop();
+        self.add_dialog_selected = 0;
+        self.rebuild_add_dialog_filter();
+    }
+
+    pub fn add_dialog_select_prev(&mut self) {
+        let len = self.add_dialog_filtered.len();
+        if len == 0 {
+            return;
+        }
+        self.add_dialog_selected = if self.add_dialog_selected == 0 {
+            len - 1
+        } else {
+            self.add_dialog_selected - 1
+        };
+    }
+
+    pub fn add_dialog_select_next(&mut self) {
+        let len = self.add_dialog_filtered.len();
+        if len == 0 {
+            return;
+        }
+        self.add_dialog_selected = (self.add_dialog_selected + 1) % len;
+    }
+
+    pub fn confirm_add_service(&mut self) {
+        if self.add_dialog_selected < self.add_dialog_filtered.len() {
+            let real_idx = self.add_dialog_filtered[self.add_dialog_selected];
+            let svc = &self.add_dialog_services[real_idx];
+            let name = svc.name.clone();
+            let display_name = svc.display_name.clone();
+
+            if self.managed_services.iter().any(|s| s.name == name) {
+                self.set_status_message(
+                    format!("服务 \"{}\" 已在管理列表中", display_name),
+                    MsgType::Info,
+                );
+            } else {
+                self.managed_services.push(ManagedService {
+                    name: name.clone(),
+                    display_name: display_name.clone(),
+                    enabled: true,
+                });
+                app_service::save_managed_services(&self.data_file, &self.managed_services);
+                if self.selected_service.is_none() {
+                    self.selected_service = Some(0);
+                }
+                self.set_status_message(
+                    format!("已添加服务: {}", display_name),
+                    MsgType::Success,
+                );
+            }
+            self.close_add_dialog();
+        }
+    }
+
+    fn rebuild_add_dialog_filter(&mut self) {
+        let search = self.add_dialog_search.to_lowercase();
+        self.add_dialog_filtered = self
+            .add_dialog_services
+            .iter()
+            .enumerate()
+            .filter(|(_, svc)| {
+                search.is_empty()
+                    || svc.name.to_lowercase().contains(&search)
+                    || svc.display_name.to_lowercase().contains(&search)
+            })
+            .map(|(i, _)| i)
+            .collect();
+    }
+
+    // ========== 选择导航 ==========
 
     pub fn select_prev(&mut self) {
         match self.current_view {
@@ -334,11 +395,28 @@ impl App {
         }
     }
 
-    pub fn update_service(&mut self, name: String, display_name: String, enabled: bool) {
-        if let Some(svc) = self.managed_services.iter_mut().find(|s| s.name == name) {
-            svc.display_name = display_name;
-            svc.enabled = enabled;
-            app_service::save_managed_services(&self.data_file, &self.managed_services);
-        }
+    // ========== 状态消息 ==========
+
+    pub fn status_message(&self) -> &str {
+        &self.status_message
+    }
+
+    pub fn status_message_type(&self) -> &MsgType {
+        &self.status_message_type
+    }
+
+    pub fn set_status_message(&mut self, msg: String, msg_type: MsgType) {
+        self.status_message = msg;
+        self.status_message_type = msg_type;
+    }
+
+    // ========== 其他 ==========
+
+    pub fn settings_selected(&self) -> usize {
+        self.settings_selected
+    }
+
+    pub fn tools_selected(&self) -> usize {
+        self.tools_selected
     }
 }

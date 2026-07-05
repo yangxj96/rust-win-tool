@@ -48,10 +48,16 @@ cargo test
 
 ## TUI Navigation
 
-- Press 1: Services view
-- Press 2: Settings view
-- Press 3: Tools view
-- Press q: Quit application
+- ←/→: Switch view (Service / Settings / Tools)
+- ↑/↓: Select item
+- a: Add service (open dialog)
+- d: Delete selected service
+- s: Start selected service
+- p: Stop selected service
+- r: Refresh service status
+- Enter: Confirm / Execute
+- Esc: Close dialog
+- q: Quit application
 
 ## Rust Notes
 
