@@ -182,7 +182,10 @@ impl App {
             PendingAction::StartService(name) => {
                 match app_service::start_service(&name) {
                     Ok(()) => { self.service_messages.remove(&name); }
-                    Err(e) => { self.service_messages.insert(name.clone(), e.to_string()); }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        self.service_messages.insert(name.clone(), truncate(&msg, 40));
+                    }
                 }
                 let status = app_service::get_service_status(&name)
                     .unwrap_or_else(|_| "未知".to_string());
@@ -191,13 +194,17 @@ impl App {
             PendingAction::StopService(name) => {
                 match app_service::stop_service(&name) {
                     Ok(()) => { self.service_messages.remove(&name); }
-                    Err(e) => { self.service_messages.insert(name.clone(), e.to_string()); }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        self.service_messages.insert(name.clone(), truncate(&msg, 40));
+                    }
                 }
                 let status = app_service::get_service_status(&name)
                     .unwrap_or_else(|_| "未知".to_string());
                 self.service_statuses.insert(name, status);
             }
             PendingAction::RefreshAll => {
+                self.service_messages.clear();
                 for svc in &self.managed_services {
                     let status = app_service::get_service_status(&svc.name)
                         .unwrap_or_else(|_| "未知".to_string());
@@ -383,5 +390,14 @@ impl App {
 
     pub fn tools_selected(&self) -> usize {
         self.tools_selected
+    }
+}
+
+fn truncate(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{}...", truncated)
     }
 }

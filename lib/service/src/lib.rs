@@ -24,15 +24,15 @@ pub struct ManagedService {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
-    #[error("执行命令失败: {0}")]
+    #[error("命令失败: {0}")]
     CommandFailed(String),
-    #[error("未找到服务: {0}")]
+    #[error("服务不存在")]
     NotFound(String),
-    #[error("启动服务失败: {0}")]
+    #[error("启动失败: {0}")]
     StartFailed(String),
-    #[error("停止服务失败: {0}")]
+    #[error("停止失败: {0}")]
     StopFailed(String),
-    #[error("解析输出失败: {0}")]
+    #[error("解析失败: {0}")]
     ParseFailed(String),
 }
 
