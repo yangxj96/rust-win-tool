@@ -105,9 +105,13 @@ pub struct SystemInfo {
 
 impl App {
     pub fn new() -> Self {
-        let app_dir = dirs::data_dir()
+        let app_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("rust-win-tool");
+            .join("config");
+
+        let _ = std::fs::create_dir_all(&app_dir);
 
         let data_file = app_dir.join("managed_services.json");
         let settings_file = app_dir.join("settings.json");
