@@ -1,5 +1,5 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
@@ -76,8 +76,8 @@ impl ServiceView {
                     };
 
                     Row::new(vec![
-                        Cell::from(Span::raw(&svc.name)),
-                        Cell::from(Span::raw(&svc.display_name)),
+                        Cell::from(Span::styled(&svc.name, Style::default().fg(c.fg_default))),
+                        Cell::from(Span::styled(&svc.display_name, Style::default().fg(c.fg_default))),
                         Cell::from(Span::styled(status_text, status_style)),
                         Cell::from(Span::styled(msg, msg_style)),
                     ])
@@ -166,7 +166,7 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
 
     let search_text = format!(" {}: {}", t.dialog_search, app.add_dialog_search());
     let search_box = Paragraph::new(search_text)
-        .style(Style::default().fg(Color::White))
+        .style(Style::default().fg(c.fg_default))
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -210,8 +210,8 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
                 };
 
                 Row::new(vec![
-                    Cell::from(Span::raw(&svc.name)),
-                    Cell::from(Span::raw(&svc.display_name)),
+                    Cell::from(Span::styled(&svc.name, Style::default().fg(c.fg_default))),
+                    Cell::from(Span::styled(&svc.display_name, Style::default().fg(c.fg_default))),
                     Cell::from(Span::styled(status_text, status_style)),
                 ])
                 .style(row_style)

@@ -51,9 +51,9 @@ impl SettingsView {
                 ListItem::new(Line::from(vec![
                     Span::styled(
                         format!("  {}: ", name),
-                        Style::default().add_modifier(Modifier::BOLD),
+                        Style::default().fg(c.fg_default).add_modifier(Modifier::BOLD),
                     ),
-                    Span::raw(*value),
+                    Span::styled(*value, Style::default().fg(c.fg_default)),
                 ]))
                 .style(style)
             })

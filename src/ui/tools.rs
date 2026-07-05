@@ -53,7 +53,7 @@ impl ToolsView {
                     ),
                     Span::styled(
                         *name,
-                        Style::default().add_modifier(Modifier::BOLD),
+                        Style::default().fg(c.fg_default).add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
                         format!("  {}", desc),

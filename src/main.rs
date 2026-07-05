@@ -112,7 +112,7 @@ fn render(frame: &mut Frame, app: &App) {
 
     // 用主题背景色填满整个终端区域
     frame.render_widget(
-        Block::default().style(Style::default().bg(c.bg_terminal)),
+        Block::default().style(Style::default().fg(c.fg_default).bg(c.bg_terminal)),
         frame.area(),
     );
 
