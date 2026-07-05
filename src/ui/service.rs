@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::app::App;
@@ -140,7 +140,10 @@ fn render_add_dialog(frame: &mut Frame, area: Rect, app: &App) {
     let c = app.theme_colors();
     let popup_area = centered_rect(70, 70, area);
 
-    frame.render_widget(Clear, popup_area);
+    frame.render_widget(
+        Block::default().style(Style::default().bg(c.bg_terminal)),
+        popup_area,
+    );
 
     let inner_chunks = Layout::vertical([
         Constraint::Length(3),

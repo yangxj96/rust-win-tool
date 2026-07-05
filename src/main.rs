@@ -108,6 +108,14 @@ fn handle_main_key(app: &mut App, code: KeyCode) -> bool {
 }
 
 fn render(frame: &mut Frame, app: &App) {
+    let c = app.theme_colors();
+
+    // 用主题背景色填满整个终端区域
+    frame.render_widget(
+        Block::default().style(Style::default().bg(c.bg_terminal)),
+        frame.area(),
+    );
+
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(0),
