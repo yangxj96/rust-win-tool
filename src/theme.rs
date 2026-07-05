@@ -23,11 +23,11 @@ pub const DARK: ThemeColors = ThemeColors {
 };
 
 pub const LIGHT: ThemeColors = ThemeColors {
-    primary: Color::Blue,
-    border: Color::Gray,
-    inactive: Color::Gray,
-    accent: Color::Blue,
-    bg_select: Color::Rgb(230, 230, 230),
+    primary: Color::Rgb(0, 100, 180),
+    border: Color::Rgb(180, 180, 180),
+    inactive: Color::Rgb(120, 120, 120),
+    accent: Color::Rgb(0, 130, 150),
+    bg_select: Color::Rgb(200, 220, 240),
     running: Color::Green,
     stopped: Color::Red,
     error: Color::Red,
