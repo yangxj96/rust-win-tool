@@ -17,3 +17,4 @@ app-utils = { path = "lib/utils" }
 app-service = { path = "lib/service" }
 anyhow = "1"
 dirs = "5"
+winreg = "0.55"

@@ -29,6 +29,7 @@ pub struct Translations {
     pub app_title: &'static str,
     pub tab_service: &'static str,
     pub tab_tools: &'static str,
+    pub tab_scripts: &'static str,
     pub tab_settings: &'static str,
 
     // 状态栏
@@ -74,6 +75,11 @@ pub struct Translations {
     pub tool_eventlog: &'static str,
     pub tool_eventlog_desc: &'static str,
 
+    // 脚本视图
+    pub scripts_header: &'static str,
+    pub script_reset_navicat: &'static str,
+    pub script_reset_navicat_desc: &'static str,
+
     // 设置视图
     pub settings_header: &'static str,
     pub setting_language: &'static str,
@@ -102,6 +108,7 @@ pub const ZH: Translations = Translations {
     app_title: "Rust 系统工具",
     tab_service: " 服务管理 ",
     tab_tools: " 系统工具 ",
+    tab_scripts: " 执行脚本 ",
     tab_settings: " 设置 ",
 
     hint_switch: "切换",
@@ -144,6 +151,10 @@ pub const ZH: Translations = Translations {
     tool_eventlog: "事件查看器",
     tool_eventlog_desc: "查看系统事件日志",
 
+    scripts_header: "执行脚本",
+    script_reset_navicat: "重置Navicat时间",
+    script_reset_navicat_desc: "清理Navicat注册信息和CLSID残留",
+
     settings_header: "设置",
     setting_language: "语言选择",
     setting_theme: "主题切换",
@@ -169,6 +180,7 @@ pub const EN: Translations = Translations {
     app_title: "Rust Win Tool",
     tab_service: " Services ",
     tab_tools: " Tools ",
+    tab_scripts: " Scripts ",
     tab_settings: " Settings ",
 
     hint_switch: "Switch",
@@ -210,6 +222,10 @@ pub const EN: Translations = Translations {
     tool_registry_desc: "Edit Windows registry",
     tool_eventlog: "Event Viewer",
     tool_eventlog_desc: "View system event logs",
+
+    scripts_header: "Scripts",
+    script_reset_navicat: "Reset Navicat",
+    script_reset_navicat_desc: "Clean Navicat registration and CLSID",
 
     settings_header: "Settings",
     setting_language: "Language",

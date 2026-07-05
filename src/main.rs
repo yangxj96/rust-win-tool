@@ -13,6 +13,7 @@ mod ui;
 
 use app::{App, View};
 use ui::service::ServiceView;
+use ui::scripts::ScriptsView;
 use ui::settings::SettingsView;
 use ui::tools::ToolsView;
 
@@ -112,6 +113,9 @@ fn handle_main_key(app: &mut App, code: KeyCode) -> bool {
         KeyCode::Enter if *app.current_view() == View::Settings && app.settings_selected() == 1 => {
             app.cycle_theme();
         }
+        KeyCode::Enter if *app.current_view() == View::Scripts => {
+            app.execute_script_for_selected();
+        }
         _ => {}
     }
     false
@@ -141,6 +145,7 @@ fn render(frame: &mut Frame, app: &App) {
         View::Service => ServiceView::render(frame, chunks[1], app),
         View::Settings => SettingsView::render(frame, chunks[1], app),
         View::Tools => ToolsView::render(frame, chunks[1], app),
+        View::Scripts => ScriptsView::render(frame, chunks[1], app),
     }
 
     // 底部状态栏
@@ -153,6 +158,7 @@ fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let titles = vec![
         t.tab_service,
         t.tab_tools,
+        t.tab_scripts,
         t.tab_settings,
     ];
 
@@ -199,7 +205,7 @@ fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) 
             s.push(Span::styled(format!("P {} ", t.hint_stop_all), y));
             s.push(Span::styled(format!("r {} ", t.hint_refresh), y));
         }
-        View::Settings | View::Tools => {
+        View::Settings | View::Tools | View::Scripts => {
             s.push(Span::styled(format!("Enter {} ", t.hint_confirm), y));
         }
     }

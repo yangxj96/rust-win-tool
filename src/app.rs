@@ -9,19 +9,21 @@ use crate::theme::{ThemeColors, DARK, LIGHT};
 pub enum View {
     Service,
     Tools,
+    Scripts,
     Settings,
 }
 
 impl View {
     pub fn all() -> &'static [View] {
-        &[View::Service, View::Tools, View::Settings]
+        &[View::Service, View::Tools, View::Scripts, View::Settings]
     }
 
     pub fn index(&self) -> usize {
         match self {
             View::Service => 0,
             View::Tools => 1,
-            View::Settings => 2,
+            View::Scripts => 2,
+            View::Settings => 3,
         }
     }
 
@@ -29,7 +31,8 @@ impl View {
         match index {
             0 => View::Service,
             1 => View::Tools,
-            2 => View::Settings,
+            2 => View::Scripts,
+            3 => View::Settings,
             _ => View::Service,
         }
     }
@@ -55,6 +58,8 @@ pub struct App {
     selected_service: Option<usize>,
     settings_selected: usize,
     tools_selected: usize,
+    scripts_selected: usize,
+    script_result: Option<String>,
     pending_action: Option<PendingAction>,
     // 添加服务对话框
     show_add_dialog: bool,
@@ -94,6 +99,8 @@ impl App {
             selected_service: selected,
             settings_selected: 0,
             tools_selected: 0,
+            scripts_selected: 0,
+            script_result: None,
             pending_action: None,
             show_add_dialog: false,
             add_dialog_services: Vec::new(),
@@ -418,6 +425,9 @@ impl App {
                     self.tools_selected - 1
                 };
             }
+            View::Scripts => {
+                self.scripts_selected = 0;
+            }
         }
     }
 
@@ -439,6 +449,9 @@ impl App {
             }
             View::Tools => {
                 self.tools_selected = (self.tools_selected + 1) % 6;
+            }
+            View::Scripts => {
+                self.scripts_selected = 0;
             }
         }
     }
@@ -488,6 +501,28 @@ impl App {
 
     pub fn tools_selected(&self) -> usize {
         self.tools_selected
+    }
+
+    pub fn scripts_selected(&self) -> usize {
+        self.scripts_selected
+    }
+
+    pub fn script_result(&self) -> Option<&str> {
+        self.script_result.as_deref()
+    }
+
+    pub fn execute_script_for_selected(&mut self) {
+        use crate::ui::scripts::{SCRIPTS, ScriptAction};
+        if self.scripts_selected < SCRIPTS.len() {
+            let script = &SCRIPTS[self.scripts_selected];
+            let result = match script.action {
+                ScriptAction::ResetNavicat => crate::ui::scripts::reset_navicat(),
+            };
+            self.script_result = Some(match result {
+                Ok(msg) => msg,
+                Err(e) => e,
+            });
+        }
     }
 }
 
