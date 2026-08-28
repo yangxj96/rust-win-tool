@@ -1,4 +1,3 @@
-pub mod scripts;
-pub mod service;
-pub mod settings;
-pub mod tools;
+pub mod components;
+pub mod input;
+pub mod main_window;

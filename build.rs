@@ -5,7 +5,7 @@ fn main() {
         res.set_icon("assets\\app.ico");
         res.set("ProductName", "rust-win-tool");
         res.set("FileDescription", "Windows System Tool");
-        res.set("Subsystem", "console");
+        res.set("Subsystem", "windows");
         res.compile().unwrap();
     }
 }
