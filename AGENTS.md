@@ -28,7 +28,7 @@ cargo test
 │       ├── main_window.rs      # GPUI root entity, pages and event handlers
 │       ├── components.rs       # Shared GPUI visual components
 │       └── input.rs            # Keyboard input policy
-└── lib/service/                # Windows service management via PowerShell
+└── lib/service/                # Windows service management via native Win32 API
 ```
 
 ## Architecture

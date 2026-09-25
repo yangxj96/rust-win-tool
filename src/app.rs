@@ -103,6 +103,8 @@ pub struct AppState {
     system_info_loading: bool,
     operation_state: OperationState,
     add_dialog: AddDialogState,
+    /// Transient message shown after a refresh completes.
+    refresh_notice: Option<String>,
 }
 
 impl AppState {
@@ -135,6 +137,7 @@ impl AppState {
             system_info_loading: false,
             operation_state: OperationState::Idle,
             add_dialog: AddDialogState::default(),
+            refresh_notice: None,
         }
     }
 
@@ -239,6 +242,19 @@ impl AppState {
 
     pub fn operation_state(&self) -> OperationState {
         self.operation_state
+    }
+
+    /// Transient "refreshed N services" message, if one is currently showing.
+    pub fn refresh_notice(&self) -> Option<&str> {
+        self.refresh_notice.as_deref()
+    }
+
+    pub fn set_refresh_notice(&mut self, message: String) {
+        self.refresh_notice = Some(message);
+    }
+
+    pub fn clear_refresh_notice(&mut self) {
+        self.refresh_notice = None;
     }
 
     pub fn remove_service(&mut self, name: &str) {
@@ -584,7 +600,11 @@ fn map_error(error: &BackendError, language: Language) -> String {
         translations.err_cannot_stop.to_string()
     } else if detail.contains("timeout") {
         translations.err_timeout.to_string()
-    } else if detail.contains("notfound") || detail.contains("服务不存在") {
+    } else if detail.contains("notfound")
+        || detail.contains("not found")
+        || detail.contains("does not exist")
+        || detail.contains("服务不存在")
+    {
         translations.err_not_found.to_string()
     } else {
         translations.err_failed.to_string()

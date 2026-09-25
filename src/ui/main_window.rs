@@ -1,12 +1,12 @@
 use std::ops::Range;
 
 use gpui::{
-    canvas, div, point, prelude::*, px, rgba, AppContext, Bounds, ClickEvent, Context, Div,
-    DragMoveEvent, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, FontWeight,
-    KeyDownEvent, Pixels, Point, Render, ScrollHandle, Timer, UTF16Selection, Window,
-    WindowControlArea,
+    canvas, div, point, prelude::*, px, rgba, Animation, AnimationExt, AnyElement, AppContext,
+    Bounds, ClickEvent, Context, Div, DragMoveEvent, ElementInputHandler, Entity,
+    EntityInputHandler, FocusHandle, FontWeight, KeyDownEvent, Pixels, Point, Render, ScrollHandle,
+    Timer, UTF16Selection, Window, WindowControlArea,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::app::{AppState, OperationState, PendingAction, ServiceStatus, Theme, View};
 use crate::backend::{self, ServiceOperation};
@@ -33,6 +33,9 @@ pub struct MainWindow {
     service_scroll: ScrollHandle,
     dialog_scroll: ScrollHandle,
     sysinfo_scroll: ScrollHandle,
+    /// Whether a first refresh has already happened, so the launch refresh does
+    /// not show the completion notice.
+    refresh_notice_ready: bool,
 }
 
 /// Payload carried while dragging a custom scrollbar thumb.
@@ -59,6 +62,7 @@ impl MainWindow {
             service_scroll: ScrollHandle::new(),
             dialog_scroll: ScrollHandle::new(),
             sysinfo_scroll: ScrollHandle::new(),
+            refresh_notice_ready: false,
         }
     }
 
@@ -180,12 +184,18 @@ impl MainWindow {
     }
 
     pub(crate) fn refresh_services(&mut self, cx: &mut Context<Self>) {
+        if self.state.read(cx).operation_state() == OperationState::Refreshing {
+            return;
+        }
         let action = self.state.update(cx, |state, cx| {
             let action = state.request_refresh();
             cx.notify();
             action
         });
-        self.spawn_service_operation(action, cx);
+        // Announce manual refreshes, but not the automatic one on launch.
+        let announce = self.refresh_notice_ready;
+        self.refresh_notice_ready = true;
+        self.spawn_service_operation(action, announce, cx);
     }
 
     fn start_service(&mut self, name: String, cx: &mut Context<Self>) {
@@ -198,7 +208,7 @@ impl MainWindow {
             action
         });
         if let Some(action) = action {
-            self.spawn_service_operation(action, cx);
+            self.spawn_service_operation(action, false, cx);
         }
     }
 
@@ -212,7 +222,7 @@ impl MainWindow {
             action
         });
         if let Some(action) = action {
-            self.spawn_service_operation(action, cx);
+            self.spawn_service_operation(action, false, cx);
         }
     }
 
@@ -223,7 +233,7 @@ impl MainWindow {
                 cx.notify();
                 action
             });
-            self.spawn_service_operation(action, cx);
+            self.spawn_service_operation(action, false, cx);
         }
     }
 
@@ -234,11 +244,17 @@ impl MainWindow {
                 cx.notify();
                 action
             });
-            self.spawn_service_operation(action, cx);
+            self.spawn_service_operation(action, false, cx);
         }
     }
 
-    fn spawn_service_operation(&mut self, action: PendingAction, cx: &mut Context<Self>) {
+    fn spawn_service_operation(
+        &mut self,
+        action: PendingAction,
+        announce: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let is_refresh = matches!(action, PendingAction::RefreshAll(_));
         let operation = match action {
             PendingAction::StartService(name) => ServiceOperation::Start(name),
             PendingAction::StopService(name) => ServiceOperation::Stop(name),
@@ -248,10 +264,23 @@ impl MainWindow {
         };
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
+            let started = Instant::now();
             let results = cx
                 .background_spawn(async move { backend::execute_service_operation(operation) })
                 .await;
-            state
+
+            // A refresh can finish in a few milliseconds with the native backend;
+            // keep it visible long enough to register as an interaction.
+            if is_refresh {
+                let minimum = Duration::from_millis(700);
+                let elapsed = started.elapsed();
+                if elapsed < minimum {
+                    Timer::after(minimum - elapsed).await;
+                }
+            }
+
+            let refreshed = results.len();
+            let pending = state
                 .update(cx, |state, cx| {
                     for result in results {
                         match result.status {
@@ -262,11 +291,82 @@ impl MainWindow {
                     if state.operation_state() != OperationState::Error {
                         state.set_operation_state(OperationState::Idle);
                     }
+                    if is_refresh && announce {
+                        let notice = state.t().refresh_done.replace("{}", &refreshed.to_string());
+                        state.set_refresh_notice(notice);
+                    }
+                    let pending: Vec<String> = state
+                        .managed_services()
+                        .iter()
+                        .map(|service| service.name.clone())
+                        .filter(|name| {
+                            matches!(
+                                state.service_status(name),
+                                ServiceStatus::Starting | ServiceStatus::Stopping
+                            )
+                        })
+                        .collect();
                     cx.notify();
+                    pending
                 })
-                .ok();
+                .unwrap_or_default();
+
             Timer::after(Duration::from_millis(100)).await;
             state.update(cx, |_state, cx| cx.notify()).ok();
+
+            if is_refresh && announce {
+                Timer::after(Duration::from_millis(1100)).await;
+                state
+                    .update(cx, |state, cx| {
+                        state.clear_refresh_notice();
+                        cx.notify();
+                    })
+                    .ok();
+            }
+
+            if pending.is_empty() {
+                return;
+            }
+
+            // The native service API returns as soon as the request is accepted,
+            // so poll in the background and update the UI as services settle.
+            for _ in 0..75 {
+                Timer::after(Duration::from_millis(400)).await;
+                let names = pending.clone();
+                let statuses = cx
+                    .background_spawn(async move {
+                        names
+                            .into_iter()
+                            .map(|name| {
+                                let status = backend::service_status(&name);
+                                (name, status)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .await;
+                let settled = state
+                    .update(cx, |state, cx| {
+                        let mut settled = true;
+                        for (name, status) in statuses {
+                            match status {
+                                Ok(status) => state.apply_service_success(&name, &status),
+                                Err(error) => state.apply_service_error(&name, &error),
+                            }
+                            if matches!(
+                                state.service_status(&name),
+                                ServiceStatus::Starting | ServiceStatus::Stopping
+                            ) {
+                                settled = false;
+                            }
+                        }
+                        cx.notify();
+                        settled
+                    })
+                    .unwrap_or(true);
+                if settled {
+                    break;
+                }
+            }
         })
         .detach();
     }
@@ -558,8 +658,43 @@ impl MainWindow {
     fn render_service_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
+        let refreshing = state.operation_state() == OperationState::Refreshing;
 
+        let refresh_button: AnyElement = if refreshing {
+            components::button(
+                translations.status_refreshing,
+                colors,
+                components::ButtonVariant::Ghost,
+            )
+            .id("service-refresh")
+            .on_click(cx.listener(Self::refresh_clicked))
+            .with_animation(
+                "service-refresh-pulse",
+                Animation::new(Duration::from_millis(760)).repeat(),
+                |element, delta| element.opacity(0.45 + 0.55 * delta),
+            )
+            .into_any_element()
+        } else {
+            components::button(
+                translations.hint_refresh,
+                colors,
+                components::ButtonVariant::Ghost,
+            )
+            .id("service-refresh")
+            .on_click(cx.listener(Self::refresh_clicked))
+            .into_any_element()
+        };
+
+        let progress = refreshing.then(|| {
+            components::progress_bar(colors)
+                .absolute()
+                .bottom_0()
+                .left_0()
+                .w_full()
+        });
         let toolbar = div()
+            .relative()
+            .pb_2()
             .flex()
             .items_center()
             .justify_between()
@@ -579,15 +714,7 @@ impl MainWindow {
                         .debug_selector(|| "service-add".to_string())
                         .on_click(cx.listener(Self::add_clicked)),
                     )
-                    .child(
-                        components::button(
-                            translations.hint_refresh,
-                            colors,
-                            components::ButtonVariant::Ghost,
-                        )
-                        .id("service-refresh")
-                        .on_click(cx.listener(Self::refresh_clicked)),
-                    ),
+                    .child(refresh_button),
             )
             .child(
                 div()
@@ -612,7 +739,8 @@ impl MainWindow {
                         .id("service-stop-all")
                         .on_click(cx.listener(Self::stop_all_clicked)),
                     ),
-            );
+            )
+            .children(progress);
 
         let header = div()
             .flex()
@@ -816,7 +944,25 @@ impl MainWindow {
                 )
         };
 
+        let notice = state.refresh_notice().map(|text| {
+            div()
+                .absolute()
+                .bottom_4()
+                .right_6()
+                .px_3()
+                .py_2()
+                .rounded_lg()
+                .bg(components::color(colors.bg.elevated))
+                .border_1()
+                .border_color(components::color(colors.border.default))
+                .shadow_lg()
+                .text_sm()
+                .text_color(components::color(colors.success.text))
+                .child(text.to_string())
+        });
+
         div()
+            .relative()
             .flex()
             .flex_col()
             .gap_4()
@@ -824,6 +970,7 @@ impl MainWindow {
             .p_6()
             .child(toolbar)
             .child(body)
+            .children(notice)
     }
 
     fn render_tools_page(&self, state: &AppState, cx: &Context<Self>) -> Div {

@@ -1,5 +1,5 @@
 use gpui::prelude::*;
-use gpui::{px, rgb, rgba, Animation, AnimationExt, Div, FontWeight, Rgba, SharedString};
+use gpui::{px, relative, rgb, rgba, Animation, AnimationExt, Div, FontWeight, Rgba, SharedString};
 use std::time::Duration;
 
 use crate::theme::{StatusColors, ThemeColors};
@@ -263,6 +263,27 @@ pub fn card_title(text: impl Into<SharedString>, colors: &ThemeColors) -> Div {
         .child(text.into())
 }
 
+/// Indeterminate progress bar shown while a refresh is in flight.
+pub fn progress_bar(colors: &ThemeColors) -> Div {
+    gpui::div()
+        .w_full()
+        .h(px(2.))
+        .rounded_full()
+        .overflow_hidden()
+        .bg(color(colors.bg.muted))
+        .child(
+            gpui::div()
+                .h_full()
+                .rounded_full()
+                .bg(color(colors.brand.primary))
+                .with_animation(
+                    "refresh-progress",
+                    Animation::new(Duration::from_millis(900)).repeat(),
+                    |element, delta| element.w(relative(0.35)).ml(relative(delta * 0.65)),
+                ),
+        )
+}
+
 /// Centered empty state with a large glyph, a title and a hint line.
 pub fn empty_state(
     icon: &str,
@@ -331,6 +352,7 @@ mod tests {
         let _ = card(&LIGHT);
         let _ = sidebar_item("▤", "服务管理", &LIGHT, true);
         let _ = card_title("系统", &LIGHT);
+        let _ = progress_bar(&LIGHT);
         let _ = window_control("×", &LIGHT, true);
         let _ = badge("运行中", &LIGHT.success);
         let _ = search_field("", "", "搜索", &LIGHT, true);

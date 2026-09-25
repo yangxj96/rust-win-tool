@@ -40,6 +40,7 @@ pub struct Translations {
     pub hint_stop_all: &'static str,
     pub hint_refresh: &'static str,
     pub hint_confirm: &'static str,
+    pub refresh_done: &'static str,
 
     // 服务视图
     pub svc_header: &'static str,
@@ -135,6 +136,7 @@ pub const ZH: Translations = Translations {
     hint_stop_all: "停止全部",
     hint_refresh: "刷新",
     hint_confirm: "确认",
+    refresh_done: "已刷新 {} 个服务",
 
     svc_header: "服务管理",
     svc_selected: "选中",
@@ -223,6 +225,7 @@ pub const EN: Translations = Translations {
     hint_stop_all: "Stop All",
     hint_refresh: "Refresh",
     hint_confirm: "Confirm",
+    refresh_done: "Refreshed {} services",
 
     svc_header: "Service Management",
     svc_selected: "Selected",
