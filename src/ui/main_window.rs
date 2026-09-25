@@ -16,13 +16,14 @@ use crate::cleanup::{self, CleanupCategory, DeleteMode};
 use crate::i18n::Language;
 use crate::theme::{StatusColors, ThemeColors};
 use crate::ui::{components, input};
+use app_service::StartType;
 
 const TOOLS: [(&str, &str); 1] = [("tool_sysinfo", "tool_sysinfo_desc")];
 
 const SERVICE_NAME_COLUMN_WIDTH: f32 = 180.;
 const SERVICE_DISPLAY_COLUMN_WIDTH: f32 = 200.;
 const SERVICE_STATUS_COLUMN_WIDTH: f32 = 96.;
-const SERVICE_ACTIONS_COLUMN_WIDTH: f32 = 168.;
+const SERVICE_ACTIONS_COLUMN_WIDTH: f32 = 210.;
 
 const ICON_SERVICE: &str = "▤";
 const ICON_TOOLS: &str = "▦";
@@ -957,6 +958,7 @@ impl MainWindow {
             let service_name = service.name.clone();
             let start_name = service_name.clone();
             let stop_name = service_name.clone();
+            let detail_name = service_name.clone();
             let delete_name = service_name;
             let actions =
                 div()
@@ -990,6 +992,20 @@ impl MainWindow {
                         .id(("service-stop", index))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.stop_service(stop_name.clone(), cx)
+                        })),
+                    )
+                    .child(
+                        components::button(
+                            translations.hint_detail,
+                            colors,
+                            components::ButtonVariant::Ghost,
+                        )
+                        .h(px(28.))
+                        .px_2()
+                        .text_xs()
+                        .id(("service-detail", index))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_service_detail(detail_name.clone(), cx)
                         })),
                     )
                     .child(
@@ -1987,6 +2003,52 @@ impl MainWindow {
         cx.notify();
     }
 
+    fn open_service_detail(&mut self, name: String, cx: &mut Context<Self>) {
+        let lookup = name.clone();
+        self.update_state(cx, move |state| state.begin_service_detail(&name));
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_spawn(async move { backend::service_details(&lookup) })
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    state.set_service_detail(result);
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn close_service_detail_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_state(cx, |state| state.close_service_detail());
+    }
+
+    fn set_start_type(&mut self, name: String, start_type: StartType, cx: &mut Context<Self>) {
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_spawn(async move { backend::set_service_start_type(&name, start_type) })
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    match result {
+                        Ok(()) => state.apply_start_type(start_type),
+                        Err(error) => state.set_service_detail_error(&error),
+                    }
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
     fn confirm_delete_clicked(
         &mut self,
         _: &ClickEvent,
@@ -2187,6 +2249,208 @@ impl MainWindow {
         }
     }
 
+    fn render_service_detail(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let colors = state.theme_colors();
+        let name = state.service_detail_name().unwrap_or_default().to_string();
+
+        let body: AnyElement = if state.service_detail_loading() {
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .py_6()
+                .w_full()
+                .text_color(components::color(colors.fg.muted))
+                .child(translations.status_refreshing)
+                .into_any_element()
+        } else if let Some(error) = state.service_detail_error() {
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .py_6()
+                .w_full()
+                .text_color(components::color(colors.danger.text))
+                .child(error.to_string())
+                .into_any_element()
+        } else if let Some(details) = state.service_detail() {
+            let status = ServiceStatus::from_backend(&details.status);
+            let start_type = details.start_type;
+            let segment_name = details.name.clone();
+            let depends_on = join_list(&details.depends_on, translations.detail_none);
+            let dependents = join_list(&details.dependents, translations.detail_none);
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .w_full()
+                .child(detail_row(
+                    translations.detail_status,
+                    status_label(status, translations).to_string(),
+                    colors,
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .w_full()
+                        .child(
+                            div()
+                                .w(px(96.))
+                                .text_sm()
+                                .text_color(components::color(colors.fg.muted))
+                                .child(translations.detail_start_type),
+                        )
+                        .child({
+                            let automatic = segment_name.clone();
+                            segment(
+                                translations.start_type_auto,
+                                start_type == StartType::Automatic,
+                                colors,
+                                "detail-start-auto",
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.set_start_type(automatic.clone(), StartType::Automatic, cx)
+                                },
+                            ))
+                        })
+                        .child({
+                            let manual = segment_name.clone();
+                            segment(
+                                translations.start_type_manual,
+                                start_type == StartType::Manual,
+                                colors,
+                                "detail-start-manual",
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.set_start_type(manual.clone(), StartType::Manual, cx)
+                                },
+                            ))
+                        })
+                        .child({
+                            let disabled = segment_name;
+                            segment(
+                                translations.start_type_disabled,
+                                start_type == StartType::Disabled,
+                                colors,
+                                "detail-start-disabled",
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.set_start_type(disabled.clone(), StartType::Disabled, cx)
+                                },
+                            ))
+                        }),
+                )
+                .child(detail_row(
+                    translations.detail_binary,
+                    details.binary_path.clone(),
+                    colors,
+                ))
+                .child(detail_row(
+                    translations.detail_account,
+                    details.account.clone(),
+                    colors,
+                ))
+                .child(detail_row(
+                    translations.detail_pid,
+                    details.process_id.to_string(),
+                    colors,
+                ))
+                .child(detail_row(
+                    translations.detail_description,
+                    details.description.clone(),
+                    colors,
+                ))
+                .child(detail_row(
+                    translations.detail_depends_on,
+                    depends_on,
+                    colors,
+                ))
+                .child(detail_row(
+                    translations.detail_dependents,
+                    dependents,
+                    colors,
+                ))
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
+
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000099))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .w(px(560.))
+                    .max_h(px(560.))
+                    .p_5()
+                    .rounded_xl()
+                    .shadow_2xl()
+                    .bg(components::color(colors.bg.elevated))
+                    .border_1()
+                    .border_color(components::color(colors.border.default))
+                    .text_color(components::color(colors.fg.default))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .w_full()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_lg()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(translations.detail_title),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(components::color(colors.fg.muted))
+                                            .child(name),
+                                    ),
+                            )
+                            .child(
+                                components::button("✕", colors, components::ButtonVariant::Ghost)
+                                    .w(px(28.))
+                                    .h(px(28.))
+                                    .px_0()
+                                    .id("detail-close")
+                                    .debug_selector(|| "detail-close".to_string())
+                                    .on_click(cx.listener(Self::close_service_detail_clicked)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .w_full()
+                            .flex_1()
+                            .id("detail-body")
+                            .overflow_y_scroll()
+                            .child(body),
+                    ),
+            )
+    }
+
     fn render_confirm_dialog(
         &self,
         state: &AppState,
@@ -2365,6 +2629,9 @@ impl Render for MainWindow {
         }
         if self.pending_empty_bin {
             content = content.child(self.render_confirm_empty_bin(state, cx));
+        }
+        if state.service_detail_name().is_some() {
+            content = content.child(self.render_service_detail(state, cx));
         }
         div()
             .size_full()
@@ -2619,6 +2886,37 @@ fn status_colors(status: ServiceStatus, colors: &ThemeColors) -> &StatusColors {
     }
 }
 
+fn detail_row(label: &str, value: String, colors: &ThemeColors) -> Div {
+    div()
+        .flex()
+        .items_start()
+        .gap_2()
+        .w_full()
+        .child(
+            div()
+                .w(px(96.))
+                .flex_shrink_0()
+                .text_sm()
+                .text_color(components::color(colors.fg.muted))
+                .child(label.to_string()),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(components::color(colors.fg.default))
+                .child(value),
+        )
+}
+
+fn join_list(items: &[String], empty: &str) -> String {
+    if items.is_empty() {
+        empty.to_string()
+    } else {
+        items.join(", ")
+    }
+}
+
 fn cleanup_category_label(
     category: CleanupCategory,
     translations: &crate::i18n::Translations,
@@ -2684,6 +2982,32 @@ mod tests {
             view.clone()
         });
         assert!(visual_cx.debug_bounds("cleanup-scan").is_some());
+    }
+
+    #[gpui::test]
+    fn service_detail_renders(cx: &mut TestAppContext) {
+        let state = cx.new(|_| {
+            let mut state = AppState::new();
+            state.begin_service_detail("Demo");
+            state.set_service_detail(Ok(app_service::ServiceDetails {
+                name: "Demo".into(),
+                display_name: "Demo Service".into(),
+                description: "A demo service".into(),
+                status: "Running".into(),
+                start_type: app_service::StartType::Automatic,
+                binary_path: r"C:\demo.exe".into(),
+                account: "LocalSystem".into(),
+                process_id: 1234,
+                depends_on: vec!["Dep".into()],
+                dependents: Vec::new(),
+            }));
+            state
+        });
+        let (view, visual_cx) = cx.add_window_view(|_, cx| MainWindow::new(state.clone(), cx));
+        let _ = visual_cx.draw(point(px(0.), px(0.)), size(px(1100.), px(720.)), |_, _| {
+            view.clone()
+        });
+        assert!(visual_cx.debug_bounds("detail-close").is_some());
     }
 
     #[gpui::test]

@@ -51,6 +51,17 @@ pub fn stop_service(name: &str) -> Result<(), BackendError> {
     app_service::stop_service(name).map_err(service_error)
 }
 
+pub fn service_details(name: &str) -> Result<app_service::ServiceDetails, BackendError> {
+    app_service::get_service_details(name).map_err(service_error)
+}
+
+pub fn set_service_start_type(
+    name: &str,
+    start_type: app_service::StartType,
+) -> Result<(), BackendError> {
+    app_service::set_service_start_type(name, start_type).map_err(service_error)
+}
+
 #[derive(Debug, Clone)]
 pub enum ServiceOperation {
     Start(String),

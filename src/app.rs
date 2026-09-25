@@ -1,4 +1,4 @@
-use app_service::{ManagedService, ServiceInfo};
+use app_service::{ManagedService, ServiceDetails, ServiceInfo, StartType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -241,6 +241,11 @@ pub struct AppState {
     service_search: SearchText,
     service_filter: ServiceFilter,
     cleanup: CleanupState,
+    /// Service whose details are shown in the detail overlay.
+    service_detail_name: Option<String>,
+    service_detail: Option<ServiceDetails>,
+    service_detail_loading: bool,
+    service_detail_error: Option<String>,
     /// Transient message shown after a refresh completes.
     refresh_notice: Option<String>,
 }
@@ -279,6 +284,10 @@ impl AppState {
             service_search: SearchText::default(),
             service_filter: ServiceFilter::All,
             cleanup: CleanupState::default(),
+            service_detail_name: None,
+            service_detail: None,
+            service_detail_loading: false,
+            service_detail_error: None,
             refresh_notice: None,
         }
     }
@@ -473,6 +482,64 @@ impl AppState {
             }
         }
         total
+    }
+
+    pub fn service_detail_name(&self) -> Option<&str> {
+        self.service_detail_name.as_deref()
+    }
+
+    pub fn service_detail(&self) -> Option<&ServiceDetails> {
+        self.service_detail.as_ref()
+    }
+
+    pub fn service_detail_loading(&self) -> bool {
+        self.service_detail_loading
+    }
+
+    pub fn service_detail_error(&self) -> Option<&str> {
+        self.service_detail_error.as_deref()
+    }
+
+    pub fn begin_service_detail(&mut self, name: &str) {
+        self.service_detail_name = Some(name.to_string());
+        self.service_detail = None;
+        self.service_detail_loading = true;
+        self.service_detail_error = None;
+        self.operation_state = OperationState::LoadingSystemInfo;
+    }
+
+    pub fn set_service_detail(&mut self, result: Result<ServiceDetails, BackendError>) {
+        self.service_detail_loading = false;
+        match result {
+            Ok(details) => {
+                self.service_detail = Some(details);
+                self.service_detail_error = None;
+                self.operation_state = OperationState::Idle;
+            }
+            Err(error) => {
+                self.service_detail = None;
+                self.service_detail_error = Some(map_error(&error, self.language));
+                self.operation_state = OperationState::Error;
+            }
+        }
+    }
+
+    pub fn close_service_detail(&mut self) {
+        self.service_detail_name = None;
+        self.service_detail = None;
+        self.service_detail_loading = false;
+        self.service_detail_error = None;
+    }
+
+    pub fn apply_start_type(&mut self, start_type: StartType) {
+        if let Some(details) = &mut self.service_detail {
+            details.start_type = start_type;
+        }
+        self.service_detail_error = None;
+    }
+
+    pub fn set_service_detail_error(&mut self, error: &BackendError) {
+        self.service_detail_error = Some(map_error(error, self.language));
     }
 
     pub fn request_refresh(&mut self) -> PendingAction {

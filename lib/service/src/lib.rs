@@ -18,6 +18,52 @@ pub struct ManagedService {
     pub enabled: bool,
 }
 
+/// Service start type, mapped to the Win32 `SERVICE_*_START` values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartType {
+    Automatic,
+    Manual,
+    Disabled,
+    Unknown,
+}
+
+impl StartType {
+    pub fn code(self) -> u32 {
+        match self {
+            Self::Automatic => 2,
+            Self::Manual => 3,
+            Self::Disabled => 4,
+            Self::Unknown => 0,
+        }
+    }
+
+    pub fn from_code(code: u32) -> Self {
+        match code {
+            2 => Self::Automatic,
+            3 => Self::Manual,
+            4 => Self::Disabled,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// Detailed configuration and runtime information for one service.
+#[derive(Debug, Clone)]
+pub struct ServiceDetails {
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub status: String,
+    pub start_type: StartType,
+    pub binary_path: String,
+    pub account: String,
+    pub process_id: u32,
+    /// Services this one depends on.
+    pub depends_on: Vec<String>,
+    /// Services that depend on this one (affected when it stops).
+    pub dependents: Vec<String>,
+}
+
 /// Service backend errors.
 ///
 /// The `Display` text intentionally contains the English keywords that the UI
@@ -69,20 +115,24 @@ pub fn save_managed_services(path: &std::path::Path, services: &[ManagedService]
 
 #[cfg(windows)]
 mod native {
-    use super::{ServiceError, ServiceInfo};
+    use super::{ServiceDetails, ServiceError, ServiceInfo, StartType};
     use windows_sys::Win32::Foundation::{
-        GetLastError, ERROR_ACCESS_DENIED, ERROR_MORE_DATA, ERROR_SERVICE_ALREADY_RUNNING,
-        ERROR_SERVICE_CANNOT_ACCEPT_CTRL, ERROR_SERVICE_DISABLED, ERROR_SERVICE_DOES_NOT_EXIST,
-        ERROR_SERVICE_NOT_ACTIVE, ERROR_SERVICE_REQUEST_TIMEOUT,
+        GetLastError, ERROR_ACCESS_DENIED, ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA,
+        ERROR_SERVICE_ALREADY_RUNNING, ERROR_SERVICE_CANNOT_ACCEPT_CTRL, ERROR_SERVICE_DISABLED,
+        ERROR_SERVICE_DOES_NOT_EXIST, ERROR_SERVICE_NOT_ACTIVE, ERROR_SERVICE_REQUEST_TIMEOUT,
     };
     use windows_sys::Win32::System::Services::{
-        CloseServiceHandle, ControlService, EnumServicesStatusExW, OpenSCManagerW, OpenServiceW,
-        QueryServiceStatusEx, StartServiceW, ENUM_SERVICE_STATUS_PROCESSW, SC_ENUM_PROCESS_INFO,
-        SC_HANDLE, SC_MANAGER_CONNECT, SC_MANAGER_ENUMERATE_SERVICE, SC_STATUS_PROCESS_INFO,
-        SERVICE_CONTINUE_PENDING, SERVICE_CONTROL_STOP, SERVICE_PAUSE_PENDING, SERVICE_PAUSED,
+        ChangeServiceConfigW, CloseServiceHandle, ControlService, EnumDependentServicesW,
+        EnumServicesStatusExW, OpenSCManagerW, OpenServiceW, QueryServiceConfig2W,
+        QueryServiceConfigW, QueryServiceStatusEx, StartServiceW, ENUM_SERVICE_STATUSW,
+        ENUM_SERVICE_STATUS_PROCESSW, QUERY_SERVICE_CONFIGW, SC_ENUM_PROCESS_INFO, SC_HANDLE,
+        SC_MANAGER_CONNECT, SC_MANAGER_ENUMERATE_SERVICE, SC_STATUS_PROCESS_INFO,
+        SERVICE_CHANGE_CONFIG, SERVICE_CONFIG_DESCRIPTION, SERVICE_CONTINUE_PENDING,
+        SERVICE_CONTROL_STOP, SERVICE_PAUSE_PENDING, SERVICE_PAUSED, SERVICE_QUERY_CONFIG,
         SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_START, SERVICE_START_PENDING,
         SERVICE_STATE_ALL, SERVICE_STATUS, SERVICE_STATUS_PROCESS, SERVICE_STOP,
-        SERVICE_STOP_PENDING, SERVICE_STOPPED, SERVICE_WIN32,
+        SERVICE_STOP_PENDING, SERVICE_STOPPED, SERVICE_WIN32, SERVICE_NO_CHANGE,
+        SERVICE_DESCRIPTIONW,
     };
 
     /// RAII wrapper so a service handle is always released.
@@ -221,6 +271,210 @@ mod native {
         }
     }
 
+    /// Split a double-null terminated multi-string into individual values.
+    fn multi_string(pointer: *const u16) -> Vec<String> {
+        if pointer.is_null() {
+            return Vec::new();
+        }
+        let mut values = Vec::new();
+        let mut cursor = pointer;
+        loop {
+            let mut length = 0usize;
+            unsafe {
+                while *cursor.add(length) != 0 {
+                    length += 1;
+                }
+            }
+            if length == 0 {
+                break;
+            }
+            values.push(unsafe {
+                String::from_utf16_lossy(std::slice::from_raw_parts(cursor, length))
+            });
+            cursor = unsafe { cursor.add(length + 1) };
+        }
+        values
+    }
+
+    /// 8-byte aligned scratch buffer for the Win32 service structures.
+    fn aligned_buffer(bytes: usize) -> Vec<usize> {
+        let unit = std::mem::size_of::<usize>();
+        vec![0usize; bytes.div_ceil(unit)]
+    }
+
+    fn buffer_bytes(buffer: &[usize]) -> u32 {
+        (buffer.len() * std::mem::size_of::<usize>()) as u32
+    }
+
+    struct RawConfig {
+        start_type: StartType,
+        binary_path: String,
+        account: String,
+        display_name: String,
+        dependencies: Vec<String>,
+    }
+
+    fn query_config(service: SC_HANDLE) -> Result<RawConfig, ServiceError> {
+        let mut buffer = aligned_buffer(8 * 1024);
+        loop {
+            let mut needed = 0u32;
+            let ok = unsafe {
+                QueryServiceConfigW(
+                    service,
+                    buffer.as_mut_ptr() as *mut QUERY_SERVICE_CONFIGW,
+                    buffer_bytes(&buffer),
+                    &mut needed,
+                )
+            };
+            if ok != 0 {
+                break;
+            }
+            let code = unsafe { GetLastError() };
+            if code == ERROR_INSUFFICIENT_BUFFER
+                && needed as usize > buffer_bytes(&buffer) as usize
+            {
+                buffer = aligned_buffer(needed as usize);
+                continue;
+            }
+            return Err(classify(code));
+        }
+        let config = unsafe { &*(buffer.as_ptr() as *const QUERY_SERVICE_CONFIGW) };
+        Ok(RawConfig {
+            start_type: StartType::from_code(config.dwStartType),
+            binary_path: pwstr_to_string(config.lpBinaryPathName),
+            account: pwstr_to_string(config.lpServiceStartName),
+            display_name: pwstr_to_string(config.lpDisplayName),
+            dependencies: multi_string(config.lpDependencies),
+        })
+    }
+
+    fn query_description(service: SC_HANDLE) -> String {
+        let mut buffer = aligned_buffer(4 * 1024);
+        let mut needed = 0u32;
+        let ok = unsafe {
+            QueryServiceConfig2W(
+                service,
+                SERVICE_CONFIG_DESCRIPTION,
+                buffer.as_mut_ptr().cast::<u8>(),
+                buffer_bytes(&buffer),
+                &mut needed,
+            )
+        };
+        if ok == 0 {
+            return String::new();
+        }
+        let description = unsafe { &*(buffer.as_ptr() as *const SERVICE_DESCRIPTIONW) };
+        pwstr_to_string(description.lpDescription)
+    }
+
+    fn query_dependents(service: SC_HANDLE) -> Vec<String> {
+        let mut buffer = aligned_buffer(8 * 1024);
+        let mut returned = 0u32;
+        loop {
+            let mut needed = 0u32;
+            let ok = unsafe {
+                EnumDependentServicesW(
+                    service,
+                    SERVICE_STATE_ALL,
+                    buffer.as_mut_ptr() as *mut ENUM_SERVICE_STATUSW,
+                    buffer_bytes(&buffer),
+                    &mut needed,
+                    &mut returned,
+                )
+            };
+            if ok != 0 {
+                break;
+            }
+            let code = unsafe { GetLastError() };
+            if code == ERROR_MORE_DATA && needed as usize > buffer_bytes(&buffer) as usize {
+                buffer = aligned_buffer(needed as usize);
+                continue;
+            }
+            return Vec::new();
+        }
+        let entries = buffer.as_ptr() as *const ENUM_SERVICE_STATUSW;
+        (0..returned as usize)
+            .map(|index| {
+                let entry = unsafe { &*entries.add(index) };
+                pwstr_to_string(entry.lpServiceName)
+            })
+            .collect()
+    }
+
+    pub fn get_service_details(name: &str) -> Result<ServiceDetails, ServiceError> {
+        let manager = open_manager(SC_MANAGER_CONNECT)?;
+        let service = open_service(
+            manager.raw(),
+            name,
+            SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG,
+        )?;
+        let config = query_config(service.raw())?;
+        let state = query_state(service.raw())?;
+
+        let mut status: SERVICE_STATUS_PROCESS = unsafe { std::mem::zeroed() };
+        let mut needed = 0u32;
+        let process_id = unsafe {
+            QueryServiceStatusEx(
+                service.raw(),
+                SC_STATUS_PROCESS_INFO,
+                (&mut status as *mut SERVICE_STATUS_PROCESS).cast::<u8>(),
+                std::mem::size_of::<SERVICE_STATUS_PROCESS>() as u32,
+                &mut needed,
+            )
+        };
+        let process_id = if process_id != 0 {
+            status.dwProcessId
+        } else {
+            0
+        };
+
+        let display_name = if config.display_name.is_empty() {
+            name.to_string()
+        } else {
+            config.display_name
+        };
+        Ok(ServiceDetails {
+            name: name.to_string(),
+            display_name,
+            description: query_description(service.raw()),
+            status: state_to_status(state).to_string(),
+            start_type: config.start_type,
+            binary_path: config.binary_path,
+            account: config.account,
+            process_id,
+            depends_on: config.dependencies,
+            dependents: query_dependents(service.raw()),
+        })
+    }
+
+    pub fn set_service_start_type(name: &str, start_type: StartType) -> Result<(), ServiceError> {
+        let manager = open_manager(SC_MANAGER_CONNECT)?;
+        let service = open_service(
+            manager.raw(),
+            name,
+            SERVICE_CHANGE_CONFIG | SERVICE_QUERY_CONFIG,
+        )?;
+        let changed = unsafe {
+            ChangeServiceConfigW(
+                service.raw(),
+                SERVICE_NO_CHANGE,
+                start_type.code(),
+                SERVICE_NO_CHANGE,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        };
+        if changed == 0 {
+            return Err(last_error());
+        }
+        Ok(())
+    }
+
     pub fn list_all_services() -> Result<Vec<ServiceInfo>, ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE)?;
 
@@ -282,7 +536,24 @@ mod native {
 }
 
 #[cfg(windows)]
-pub use native::{get_service_status, list_all_services, start_service, stop_service};
+pub use native::{
+    get_service_details, get_service_status, list_all_services, set_service_start_type,
+    start_service, stop_service,
+};
+
+#[cfg(not(windows))]
+pub fn get_service_details(name: &str) -> Result<ServiceDetails, ServiceError> {
+    let _ = name;
+    Err(ServiceError::UnsupportedPlatform)
+}
+
+#[cfg(not(windows))]
+pub fn set_service_start_type(
+    _name: &str,
+    _start_type: StartType,
+) -> Result<(), ServiceError> {
+    Err(ServiceError::UnsupportedPlatform)
+}
 
 #[cfg(not(windows))]
 pub fn list_all_services() -> Result<Vec<ServiceInfo>, ServiceError> {
