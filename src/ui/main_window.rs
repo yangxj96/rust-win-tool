@@ -9,7 +9,8 @@ use gpui::{
 use std::time::{Duration, Instant};
 
 use crate::app::{
-    AppState, OperationState, PendingAction, ServiceFilter, ServiceStatus, Theme, View,
+    AppState, HistoryAction, HistoryEntry, OperationState, PendingAction, ServiceFilter,
+    ServiceSort, ServiceStatus, Theme, View,
 };
 use crate::backend::{self, ServiceOperation};
 use crate::cleanup::{self, CleanupCategory, DeleteMode};
@@ -44,6 +45,8 @@ pub struct MainWindow {
     /// Cleanup confirmation dialogs.
     pending_clean: bool,
     pending_empty_bin: bool,
+    /// Session operation history overlay.
+    history_open: bool,
     /// Whether a first refresh has already happened, so the launch refresh does
     /// not show the completion notice.
     refresh_notice_ready: bool,
@@ -89,6 +92,7 @@ impl MainWindow {
             pending_delete: None,
             pending_clean: false,
             pending_empty_bin: false,
+            history_open: false,
             refresh_notice_ready: false,
         }
     }
@@ -282,6 +286,13 @@ impl MainWindow {
         cx: &mut Context<Self>,
     ) {
         let is_refresh = matches!(action, PendingAction::RefreshAll(_));
+        let history_action = match &action {
+            PendingAction::StartService(_) => HistoryAction::Start,
+            PendingAction::StopService(_) => HistoryAction::Stop,
+            PendingAction::StartAll(_) => HistoryAction::StartAll,
+            PendingAction::StopAll(_) => HistoryAction::StopAll,
+            PendingAction::RefreshAll(_) => HistoryAction::Refresh,
+        };
         let operation = match action {
             PendingAction::StartService(name) => ServiceOperation::Start(name),
             PendingAction::StopService(name) => ServiceOperation::Stop(name),
@@ -310,6 +321,19 @@ impl MainWindow {
             let pending = state
                 .update(cx, |state, cx| {
                     for result in results {
+                        let ok = result.status.is_ok();
+                        let message = result
+                            .status
+                            .as_ref()
+                            .err()
+                            .map(|error| error.to_string())
+                            .unwrap_or_default();
+                        state.record_history(HistoryEntry {
+                            action: history_action,
+                            service: result.name.clone(),
+                            ok,
+                            message,
+                        });
                         match result.status {
                             Ok(status) => state.apply_service_success(&result.name, &status),
                             Err(error) => state.apply_service_error(&result.name, &error),
@@ -791,7 +815,16 @@ impl MainWindow {
                         .debug_selector(|| "service-add".to_string())
                         .on_click(cx.listener(Self::add_clicked)),
                     )
-                    .child(refresh_button),
+                    .child(refresh_button)
+                    .child(
+                        components::button(
+                            translations.hint_history,
+                            colors,
+                            components::ButtonVariant::Ghost,
+                        )
+                        .id("service-history")
+                        .on_click(cx.listener(Self::toggle_history_clicked)),
+                    ),
             )
             .child(
                 div()
@@ -914,6 +947,17 @@ impl MainWindow {
                             this.update_state(cx, |state| {
                                 state.set_service_filter(ServiceFilter::Pending)
                             })
+                        })),
+                    )
+                    .child(
+                        components::button(
+                            service_sort_label(state.service_sort(), translations),
+                            colors,
+                            components::ButtonVariant::Ghost,
+                        )
+                        .id("service-sort")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.update_state(cx, |state| state.cycle_service_sort())
                         })),
                     ),
             );
@@ -2030,18 +2074,42 @@ impl MainWindow {
         self.update_state(cx, |state| state.close_service_detail());
     }
 
+    fn toggle_history_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.history_open = !self.history_open;
+        cx.notify();
+    }
+
+    fn close_history_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.history_open = false;
+        cx.notify();
+    }
+
+    fn clear_history_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.update_state(cx, |state| state.clear_history());
+    }
+
     fn set_start_type(&mut self, name: String, start_type: StartType, cx: &mut Context<Self>) {
         let state = self.state.clone();
+        let history_name = name.clone();
         cx.spawn(async move |_this, cx| {
             let result = cx
                 .background_spawn(async move { backend::set_service_start_type(&name, start_type) })
                 .await;
             state
                 .update(cx, |state, cx| {
-                    match result {
+                    match &result {
                         Ok(()) => state.apply_start_type(start_type),
-                        Err(error) => state.set_service_detail_error(&error),
+                        Err(error) => state.set_service_detail_error(error),
                     }
+                    state.record_history(HistoryEntry {
+                        action: HistoryAction::StartType,
+                        service: history_name.clone(),
+                        ok: result.is_ok(),
+                        message: result
+                            .err()
+                            .map(|error| error.to_string())
+                            .unwrap_or_default(),
+                    });
                     cx.notify();
                 })
                 .ok();
@@ -2451,6 +2519,154 @@ impl MainWindow {
             )
     }
 
+    fn render_history(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let colors = state.theme_colors();
+        let entries = state.history();
+
+        let list: AnyElement = if entries.is_empty() {
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .py_6()
+                .w_full()
+                .text_color(components::color(colors.fg.muted))
+                .child(translations.history_empty)
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .w_full()
+                .children(entries.iter().rev().map(|entry| {
+                    let accent = if entry.ok {
+                        colors.success.text
+                    } else {
+                        colors.danger.text
+                    };
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .w_full()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(components::color(colors.bg.canvas))
+                        .text_sm()
+                        .child(
+                            div()
+                                .w(px(14.))
+                                .text_color(components::color(accent))
+                                .child(if entry.ok { "✓" } else { "✗" }),
+                        )
+                        .child(
+                            div()
+                                .w(px(84.))
+                                .flex_shrink_0()
+                                .text_color(components::color(colors.fg.muted))
+                                .child(history_action_label(entry.action, translations)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_color(components::color(colors.fg.default))
+                                .child(entry.service.clone()),
+                        )
+                        .children((!entry.message.is_empty()).then(|| {
+                            div()
+                                .flex_shrink_0()
+                                .text_color(components::color(colors.danger.text))
+                                .child(entry.message.clone())
+                        }))
+                }))
+                .into_any_element()
+        };
+
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000099))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .w(px(560.))
+                    .max_h(px(560.))
+                    .p_5()
+                    .rounded_xl()
+                    .shadow_2xl()
+                    .bg(components::color(colors.bg.elevated))
+                    .border_1()
+                    .border_color(components::color(colors.border.default))
+                    .text_color(components::color(colors.fg.default))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .w_full()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(translations.history_title),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        components::button(
+                                            translations.history_clear,
+                                            colors,
+                                            components::ButtonVariant::Ghost,
+                                        )
+                                        .h(px(28.))
+                                        .px_2()
+                                        .text_xs()
+                                        .id("history-clear")
+                                        .on_click(cx.listener(Self::clear_history_clicked)),
+                                    )
+                                    .child(
+                                        components::button(
+                                            "✕",
+                                            colors,
+                                            components::ButtonVariant::Ghost,
+                                        )
+                                        .w(px(28.))
+                                        .h(px(28.))
+                                        .px_0()
+                                        .id("history-close")
+                                        .on_click(cx.listener(Self::close_history_clicked)),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .w_full()
+                            .flex_1()
+                            .id("history-body")
+                            .overflow_y_scroll()
+                            .child(list),
+                    ),
+            )
+    }
+
     fn render_confirm_dialog(
         &self,
         state: &AppState,
@@ -2632,6 +2848,9 @@ impl Render for MainWindow {
         }
         if state.service_detail_name().is_some() {
             content = content.child(self.render_service_detail(state, cx));
+        }
+        if self.history_open {
+            content = content.child(self.render_history(state, cx));
         }
         div()
             .size_full()
@@ -2883,6 +3102,28 @@ fn status_colors(status: ServiceStatus, colors: &ThemeColors) -> &StatusColors {
             &colors.warning
         }
         ServiceStatus::Unknown => &colors.info,
+    }
+}
+
+fn service_sort_label(sort: ServiceSort, translations: &crate::i18n::Translations) -> &'static str {
+    match sort {
+        ServiceSort::Manual => translations.sort_manual,
+        ServiceSort::Name => translations.sort_name,
+        ServiceSort::Status => translations.sort_status,
+    }
+}
+
+fn history_action_label(
+    action: HistoryAction,
+    translations: &crate::i18n::Translations,
+) -> &'static str {
+    match action {
+        HistoryAction::Start => translations.action_start,
+        HistoryAction::Stop => translations.action_stop,
+        HistoryAction::StartAll => translations.action_start_all,
+        HistoryAction::StopAll => translations.action_stop_all,
+        HistoryAction::Refresh => translations.action_refresh,
+        HistoryAction::StartType => translations.action_start_type,
     }
 }
 

@@ -165,6 +165,45 @@ pub enum ServiceFilter {
     Pending,
 }
 
+/// Ordering of the main service list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceSort {
+    Manual,
+    Name,
+    Status,
+}
+
+impl ServiceSort {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Manual => Self::Name,
+            Self::Name => Self::Status,
+            Self::Status => Self::Manual,
+        }
+    }
+}
+
+/// A user operation recorded for the session history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryAction {
+    Start,
+    Stop,
+    StartAll,
+    StopAll,
+    Refresh,
+    StartType,
+}
+
+#[derive(Debug, Clone)]
+pub struct HistoryEntry {
+    pub action: HistoryAction,
+    pub service: String,
+    pub ok: bool,
+    pub message: String,
+}
+
+const HISTORY_LIMIT: usize = 100;
+
 impl ServiceFilter {
     fn matches(self, status: ServiceStatus) -> bool {
         match self {
@@ -240,6 +279,8 @@ pub struct AppState {
     /// Free-text filter and status filter for the main service list.
     service_search: SearchText,
     service_filter: ServiceFilter,
+    service_sort: ServiceSort,
+    history: Vec<HistoryEntry>,
     cleanup: CleanupState,
     /// Service whose details are shown in the detail overlay.
     service_detail_name: Option<String>,
@@ -283,6 +324,8 @@ impl AppState {
             add_dialog: AddDialogState::default(),
             service_search: SearchText::default(),
             service_filter: ServiceFilter::All,
+            service_sort: ServiceSort::Manual,
+            history: Vec::new(),
             cleanup: CleanupState::default(),
             service_detail_name: None,
             service_detail: None,
@@ -334,6 +377,14 @@ impl AppState {
         self.service_filter = filter;
     }
 
+    pub fn service_sort(&self) -> ServiceSort {
+        self.service_sort
+    }
+
+    pub fn cycle_service_sort(&mut self) {
+        self.service_sort = self.service_sort.next();
+    }
+
     pub fn service_search_text_utf16_len(&self) -> usize {
         self.service_search.utf16_len()
     }
@@ -367,10 +418,11 @@ impl AppState {
     }
 
     /// Indices into `managed_services` that pass the current search and status
-    /// filter, in list order.
+    /// filter, in the order requested by the sort setting.
     pub fn filtered_service_indices(&self) -> Vec<usize> {
         let search = self.service_search.text.to_lowercase();
-        self.managed_services
+        let mut indices: Vec<usize> = self
+            .managed_services
             .iter()
             .enumerate()
             .filter(|(_, service)| {
@@ -383,7 +435,41 @@ impl AppState {
                         .matches(self.service_status(&service.name))
             })
             .map(|(index, _)| index)
-            .collect()
+            .collect();
+
+        match self.service_sort {
+            ServiceSort::Manual => {}
+            ServiceSort::Name => indices.sort_by(|&a, &b| {
+                self.managed_services[a]
+                    .display_name
+                    .to_lowercase()
+                    .cmp(&self.managed_services[b].display_name.to_lowercase())
+            }),
+            ServiceSort::Status => indices.sort_by_key(|&index| {
+                let service = &self.managed_services[index];
+                (
+                    status_rank(self.service_status(&service.name)),
+                    service.display_name.to_lowercase(),
+                )
+            }),
+        }
+        indices
+    }
+
+    pub fn record_history(&mut self, entry: HistoryEntry) {
+        self.history.push(entry);
+        if self.history.len() > HISTORY_LIMIT {
+            let excess = self.history.len() - HISTORY_LIMIT;
+            self.history.drain(0..excess);
+        }
+    }
+
+    pub fn history(&self) -> &[HistoryEntry] {
+        &self.history
+    }
+
+    pub fn clear_history(&mut self) {
+        self.history.clear();
     }
 
     pub fn cleanup(&self) -> &CleanupState {
@@ -940,6 +1026,15 @@ impl AppState {
     }
 }
 
+fn status_rank(status: ServiceStatus) -> u8 {
+    match status {
+        ServiceStatus::Running => 0,
+        ServiceStatus::Starting | ServiceStatus::Stopping | ServiceStatus::Refreshing => 1,
+        ServiceStatus::Stopped => 2,
+        ServiceStatus::Unknown => 3,
+    }
+}
+
 fn translations_for(language: Language) -> &'static Translations {
     match language {
         Language::Chinese => &ZH,
@@ -1113,6 +1208,44 @@ mod tests {
         assert_eq!(state.filtered_service_indices(), vec![1]);
         state.set_service_filter(ServiceFilter::Pending);
         assert!(state.filtered_service_indices().is_empty());
+    }
+
+    #[test]
+    fn service_list_sorts_by_name_and_status() {
+        let mut state = AppState::new();
+        add_managed(&mut state, "Alpha", "Alpha");
+        add_managed(&mut state, "Bravo", "Bravo");
+        state.apply_service_success("Alpha", "Stopped");
+        state.apply_service_success("Bravo", "Running");
+
+        assert_eq!(state.filtered_service_indices(), vec![0, 1]);
+
+        state.cycle_service_sort(); // Name
+        assert_eq!(state.filtered_service_indices(), vec![0, 1]);
+
+        state.cycle_service_sort(); // Status: running first
+        assert_eq!(state.filtered_service_indices(), vec![1, 0]);
+    }
+
+    #[test]
+    fn operation_history_is_capped_and_cleared() {
+        let mut state = AppState::new();
+        for index in 0..(HISTORY_LIMIT + 10) {
+            state.record_history(HistoryEntry {
+                action: HistoryAction::Start,
+                service: format!("S{index}"),
+                ok: index % 2 == 0,
+                message: String::new(),
+            });
+        }
+        assert_eq!(state.history().len(), HISTORY_LIMIT);
+        assert!(state
+            .history()
+            .last()
+            .is_some_and(|entry| entry.service == "S109"));
+
+        state.clear_history();
+        assert!(state.history().is_empty());
     }
 
     #[test]
