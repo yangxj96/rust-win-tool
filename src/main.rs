@@ -9,6 +9,7 @@ mod backend;
 mod cleanup;
 mod file_dialog;
 mod i18n;
+mod logging;
 mod theme;
 mod ui;
 
@@ -82,11 +83,52 @@ mod elevation {
     }
 }
 
+/// Keep a single running instance; a second launch focuses the existing window.
+#[cfg(target_os = "windows")]
+mod instance {
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+
+    pub fn already_running() -> bool {
+        let name: Vec<u16> = "Local\\rust-win-tool-single-instance\0"
+            .encode_utf16()
+            .collect();
+        let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+        if handle.is_null() {
+            return false;
+        }
+        // The handle is intentionally leaked so the mutex lives for the whole
+        // process; when this process exits the name is released.
+        unsafe { GetLastError() == ERROR_ALREADY_EXISTS }
+    }
+
+    pub fn focus_existing() {
+        let title: Vec<u16> = "Rust Win Tool\0".encode_utf16().collect();
+        let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
+        if !window.is_null() {
+            unsafe {
+                ShowWindow(window, SW_RESTORE);
+                SetForegroundWindow(window);
+            }
+        }
+    }
+}
+
 fn main() {
     #[cfg(target_os = "windows")]
     if elevation::relaunch_elevated() {
         return;
     }
+    #[cfg(target_os = "windows")]
+    if instance::already_running() {
+        instance::focus_existing();
+        return;
+    }
+
+    logging::init();
 
     Application::new().run(|cx| {
         let bounds = Bounds::centered(None, size(px(1100.), px(720.)), cx);

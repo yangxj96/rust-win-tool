@@ -103,6 +103,8 @@ pub struct Translations {
     pub hint_import: &'static str,
     pub export_done: &'static str,
     pub import_done: &'static str,
+    pub setting_logs: &'static str,
+    pub hint_open_dir: &'static str,
 
     // 服务视图
     pub svc_header: &'static str,
@@ -258,6 +260,8 @@ pub const ZH: Translations = Translations {
     hint_import: "导入",
     export_done: "已导出到 {}",
     import_done: "已导入 {} 个服务",
+    setting_logs: "运行日志",
+    hint_open_dir: "打开目录",
 
     svc_header: "服务管理",
     svc_selected: "选中",
@@ -406,6 +410,8 @@ pub const EN: Translations = Translations {
     hint_import: "Import",
     export_done: "Exported to {}",
     import_done: "Imported {} services",
+    setting_logs: "Logs",
+    hint_open_dir: "Open folder",
 
     svc_header: "Service Management",
     svc_selected: "Selected",

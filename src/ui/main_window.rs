@@ -332,8 +332,18 @@ impl MainWindow {
                             action: history_action,
                             service: result.name.clone(),
                             ok,
-                            message,
+                            message: message.clone(),
                         });
+                        crate::logging::log(&format!(
+                            "{:?} {} -> {}",
+                            history_action,
+                            result.name,
+                            if ok {
+                                "ok".to_string()
+                            } else {
+                                message.clone()
+                            }
+                        ));
                         match result.status {
                             Ok(status) => state.apply_service_success(&result.name, &status),
                             Err(error) => state.apply_service_error(&result.name, &error),
@@ -1767,6 +1777,30 @@ impl MainWindow {
                     ),
             );
 
+        let logs_row = components::card(colors)
+            .flex()
+            .items_center()
+            .justify_between()
+            .p_4()
+            .id("setting-row-2")
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(components::color(colors.fg.default))
+                    .child(translations.setting_logs),
+            )
+            .child(
+                components::button(
+                    translations.hint_open_dir,
+                    colors,
+                    components::ButtonVariant::Secondary,
+                )
+                .id("setting-open-logs")
+                .debug_selector(|| "setting-open-logs".to_string())
+                .on_click(cx.listener(|_, _, _, _| crate::logging::open_dir())),
+            );
+
         div()
             .flex()
             .flex_col()
@@ -1775,6 +1809,7 @@ impl MainWindow {
             .p_6()
             .child(language_row)
             .child(theme_row)
+            .child(logs_row)
     }
 
     fn render_add_dialog(&self, window: &Window, state: &AppState, cx: &Context<Self>) -> Div {
@@ -2224,15 +2259,22 @@ impl MainWindow {
                         Ok(()) => state.apply_start_type(start_type),
                         Err(error) => state.set_service_detail_error(error),
                     }
+                    let ok = result.is_ok();
                     state.record_history(HistoryEntry {
                         action: HistoryAction::StartType,
                         service: history_name.clone(),
-                        ok: result.is_ok(),
+                        ok,
                         message: result
                             .err()
                             .map(|error| error.to_string())
                             .unwrap_or_default(),
                     });
+                    crate::logging::log(&format!(
+                        "StartType {} ({:?}) -> {}",
+                        history_name,
+                        start_type,
+                        if ok { "ok" } else { "failed" }
+                    ));
                     cx.notify();
                 })
                 .ok();
@@ -2342,6 +2384,10 @@ impl MainWindow {
                     cx.notify();
                 })
                 .ok();
+            crate::logging::log(&format!(
+                "cleanup freed {} bytes, removed {}, skipped {}",
+                report.freed_bytes, report.removed_files, report.skipped_files
+            ));
         })
         .detach();
     }
@@ -3346,6 +3392,20 @@ mod tests {
             view.clone()
         });
         assert!(visual_cx.debug_bounds("cleanup-scan").is_some());
+    }
+
+    #[gpui::test]
+    fn settings_page_renders(cx: &mut TestAppContext) {
+        let state = cx.new(|_| {
+            let mut state = AppState::new();
+            state.set_view(View::Settings);
+            state
+        });
+        let (view, visual_cx) = cx.add_window_view(|_, cx| MainWindow::new(state.clone(), cx));
+        let _ = visual_cx.draw(point(px(0.), px(0.)), size(px(1100.), px(720.)), |_, _| {
+            view.clone()
+        });
+        assert!(visual_cx.debug_bounds("setting-open-logs").is_some());
     }
 
     #[gpui::test]
