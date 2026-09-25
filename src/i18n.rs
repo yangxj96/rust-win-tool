@@ -105,6 +105,9 @@ pub struct Translations {
     pub import_done: &'static str,
     pub setting_logs: &'static str,
     pub hint_open_dir: &'static str,
+    pub tray_show: &'static str,
+    pub tray_hide: &'static str,
+    pub tray_exit: &'static str,
 
     // 服务视图
     pub svc_header: &'static str,
@@ -262,6 +265,9 @@ pub const ZH: Translations = Translations {
     import_done: "已导入 {} 个服务",
     setting_logs: "运行日志",
     hint_open_dir: "打开目录",
+    tray_show: "显示主窗口",
+    tray_hide: "隐藏到托盘",
+    tray_exit: "退出",
 
     svc_header: "服务管理",
     svc_selected: "选中",
@@ -412,6 +418,9 @@ pub const EN: Translations = Translations {
     import_done: "Imported {} services",
     setting_logs: "Logs",
     hint_open_dir: "Open folder",
+    tray_show: "Show window",
+    tray_hide: "Hide to tray",
+    tray_exit: "Exit",
 
     svc_header: "Service Management",
     svc_selected: "Selected",

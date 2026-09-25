@@ -18,9 +18,13 @@ cargo test
 ```text
 ├── Cargo.toml                  # Root crate, all deps declared here
 ├── src/
-│   ├── main.rs                 # GPUI entrypoint and window configuration
+│   ├── main.rs                 # GPUI entrypoint, elevation, single instance, tray
 │   ├── app.rs                  # AppState, navigation, persistence-facing state
-│   ├── backend.rs              # Async-task targets: services, PowerShell, registry
+│   ├── backend.rs              # Async-task targets: native services, system info, registry
+│   ├── cleanup.rs              # Junk file scan/clean (native, recycle bin)
+│   ├── file_dialog.rs          # Native open/save file dialogs
+│   ├── logging.rs              # Append-only file logger (config/logs)
+│   ├── tray.rs                 # System tray icon and menu (Shell_NotifyIcon)
 │   ├── i18n.rs                 # Internationalization (Language, Translations, ZH/EN)
 │   ├── theme.rs                # Framework-neutral theme colors
 │   └── ui/
@@ -45,7 +49,7 @@ cargo test
 ## Key Types
 
 - `AppState` — application state and persistence-backed behavior
-- `View` — `Service`, `Tools`, `Scripts`, `Settings`
+- `View` — `Service`, `Tools`, `Cleanup`, `Scripts`, `Settings`
 - `Theme` — `Dark`/`Light`, serialized in `settings.json`
 - `ServiceStatus` — typed service status used by the UI
 - `OperationState` — typed loading/operation state

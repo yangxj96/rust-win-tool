@@ -11,6 +11,7 @@ mod file_dialog;
 mod i18n;
 mod logging;
 mod theme;
+mod tray;
 mod ui;
 
 use app::AppState;
@@ -155,8 +156,26 @@ fn main() {
             .update(cx, |view, window, cx| {
                 window.focus(&view.focus_handle);
                 view.refresh_services(cx);
+
+                #[cfg(target_os = "windows")]
+                {
+                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                    if let Ok(handle) = <gpui::Window as HasWindowHandle>::window_handle(window) {
+                        if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+                            let translations = view.state.read(cx).t();
+                            tray::install(
+                                tray::TrayLabels {
+                                    show: translations.tray_show.to_string(),
+                                    hide: translations.tray_hide.to_string(),
+                                    exit: translations.tray_exit.to_string(),
+                                },
+                                win32.hwnd.get() as *mut std::ffi::c_void,
+                            );
+                        }
+                    }
+                }
             })
-            .expect("failed to initialize service status refresh");
+            .expect("failed to initialize the main window");
         cx.activate(true);
     });
 }
