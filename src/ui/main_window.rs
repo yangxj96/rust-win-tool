@@ -8,36 +8,7 @@ use crate::backend::{self, ServiceOperation};
 use crate::ui::{components, input};
 
 const TOOLS: [(&str, &str); 1] = [("tool_sysinfo", "tool_sysinfo_desc")];
-const SERVICE_STATUS_COLUMN_WIDTH: f32 = 96.;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ServiceSummary {
-    total: usize,
-    running: usize,
-    stopped: usize,
-    pending: usize,
-}
-
-fn service_summary(statuses: impl IntoIterator<Item = ServiceStatus>) -> ServiceSummary {
-    let mut summary = ServiceSummary {
-        total: 0,
-        running: 0,
-        stopped: 0,
-        pending: 0,
-    };
-    for status in statuses {
-        summary.total += 1;
-        match status {
-            ServiceStatus::Running => summary.running += 1,
-            ServiceStatus::Stopped => summary.stopped += 1,
-            ServiceStatus::Starting | ServiceStatus::Stopping | ServiceStatus::Refreshing => {
-                summary.pending += 1;
-            }
-            ServiceStatus::Unknown => {}
-        }
-    }
-    summary
-}
+const SERVICE_STATUS_COLUMN_WIDTH: f32 = 80.;
 
 pub struct MainWindow {
     pub(crate) state: Entity<AppState>,
@@ -118,16 +89,6 @@ impl MainWindow {
         self.update_state(cx, move |state| state.set_view(view));
     }
 
-    fn select_service(
-        &mut self,
-        index: usize,
-        _event: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.update_state(cx, move |state| state.select_service(index));
-    }
-
     fn select_tool(
         &mut self,
         index: usize,
@@ -184,12 +145,12 @@ impl MainWindow {
         self.spawn_service_operation(action, cx);
     }
 
-    fn start_selected(&mut self, cx: &mut Context<Self>) {
+    fn start_service(&mut self, name: String, cx: &mut Context<Self>) {
         if self.state.read(cx).current_view() != View::Service {
             return;
         }
-        let action = self.state.update(cx, |state, cx| {
-            let action = state.request_start_selected();
+        let action = self.state.update(cx, move |state, cx| {
+            let action = state.request_start_service(&name);
             cx.notify();
             action
         });
@@ -198,12 +159,12 @@ impl MainWindow {
         }
     }
 
-    fn stop_selected(&mut self, cx: &mut Context<Self>) {
+    fn stop_service(&mut self, name: String, cx: &mut Context<Self>) {
         if self.state.read(cx).current_view() != View::Service {
             return;
         }
-        let action = self.state.update(cx, |state, cx| {
-            let action = state.request_stop_selected();
+        let action = self.state.update(cx, move |state, cx| {
+            let action = state.request_stop_service(&name);
             cx.notify();
             action
         });
@@ -498,11 +459,6 @@ impl MainWindow {
     fn render_service_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
-        let selected_service = state
-            .selected_service()
-            .and_then(|index| state.managed_services().get(index))
-            .map(|service| service.display_name.clone())
-            .unwrap_or_else(|| translations.svc_none.to_string());
         let primary_actions = div()
             .flex()
             .items_center()
@@ -531,109 +487,14 @@ impl MainWindow {
                     .id("service-stop-all")
                     .on_click(cx.listener(Self::stop_all_clicked)),
             );
-        let selected_actions = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(
-                components::button(translations.hint_delete, colors, false)
-                    .id("service-delete")
-                    .on_click(cx.listener(Self::delete_clicked)),
-            )
-            .child(
-                components::button(translations.hint_start, colors, false)
-                    .id("service-start")
-                    .on_click(cx.listener(Self::start_clicked)),
-            )
-            .child(
-                components::button(translations.hint_stop, colors, false)
-                    .id("service-stop")
-                    .on_click(cx.listener(Self::stop_clicked)),
-            );
         let toolbar = div()
             .flex()
-            .flex_col()
-            .gap_3()
+            .items_center()
+            .justify_between()
             .w_full()
             .mb_4()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .w_full()
-                    .child(primary_actions)
-                    .child(batch_actions),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .w_full()
-                    .p_3()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(components::color(colors.border))
-                    .bg(components::color(colors.bg_surface))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(components::color(colors.inactive))
-                                    .child(translations.svc_selected),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(components::color(colors.fg_default))
-                                    .child(selected_service),
-                            ),
-                    )
-                    .child(selected_actions),
-            );
-
-        let summary = service_summary(
-            state
-                .managed_services()
-                .iter()
-                .map(|service| state.service_status(&service.name)),
-        );
-        let summary_row = div()
-            .id("service-summary")
-            .debug_selector(|| "service-summary".to_string())
-            .flex()
-            .gap_3()
-            .w_full()
-            .mb_4()
-            .child(components::stat_card(
-                translations.svc_total,
-                summary.total,
-                colors.primary,
-                colors,
-            ))
-            .child(components::stat_card(
-                translations.svc_running,
-                summary.running,
-                colors.success,
-                colors,
-            ))
-            .child(components::stat_card(
-                translations.svc_stopped,
-                summary.stopped,
-                colors.danger,
-                colors,
-            ))
-            .child(components::stat_card(
-                translations.svc_pending,
-                summary.pending,
-                colors.warning,
-                colors,
-            ));
+            .child(primary_actions)
+            .child(batch_actions);
 
         let header = div()
             .flex()
@@ -645,23 +506,59 @@ impl MainWindow {
             .bg(components::color(colors.bg_window))
             .text_sm()
             .text_color(components::color(colors.inactive))
-            .child(div().w(px(250.)).child(translations.col_name))
-            .child(div().w(px(280.)).child(translations.col_display))
+            .child(div().w(px(170.)).child(translations.col_name))
+            .child(div().w(px(180.)).child(translations.col_display))
             .child(
                 div()
                     .w(px(SERVICE_STATUS_COLUMN_WIDTH))
                     .child(translations.col_status),
             )
-            .child(div().flex_1().child(translations.col_message));
+            .child(div().flex_1().child(translations.col_message))
+            .child(div().w(px(150.)).child(translations.col_actions));
 
         let rows = state
             .managed_services()
             .iter()
             .enumerate()
             .map(|(index, service)| {
-                let selected = state.selected_service() == Some(index);
                 let status = state.service_status(&service.name);
                 let message = state.service_message(&service.name).unwrap_or("");
+                let service_name = service.name.clone();
+                let start_name = service_name.clone();
+                let stop_name = service_name.clone();
+                let delete_name = service_name;
+                let actions = div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .w(px(150.))
+                    .child(
+                        components::button(translations.hint_start, colors, false)
+                            .px_1()
+                            .id(("service-start", index))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.start_service(start_name.clone(), cx)
+                            })),
+                    )
+                    .child(
+                        components::button(translations.hint_stop, colors, false)
+                            .px_1()
+                            .id(("service-stop", index))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.stop_service(stop_name.clone(), cx)
+                            })),
+                    )
+                    .child(
+                        components::button(translations.hint_delete, colors, false)
+                            .px_1()
+                            .id(("service-delete", index))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let delete_name = delete_name.clone();
+                                this.update_state(cx, move |state| {
+                                    state.remove_service(&delete_name)
+                                })
+                            })),
+                    );
                 div()
                     .flex()
                     .items_center()
@@ -669,31 +566,13 @@ impl MainWindow {
                     .min_h(px(52.))
                     .px_3()
                     .border_b_1()
-                    .border_color(components::color(if selected {
-                        colors.primary
-                    } else {
-                        colors.border
-                    }))
-                    .bg(if selected {
-                        components::color(colors.bg_select)
-                    } else {
-                        components::color(colors.bg_surface)
-                    })
+                    .border_color(components::color(colors.border))
+                    .bg(components::color(colors.bg_surface))
                     .text_color(components::color(colors.fg_default))
-                    .cursor_pointer()
-                    .hover(move |style| {
-                        style.bg(components::color(if selected {
-                            colors.bg_select
-                        } else {
-                            colors.bg_window
-                        }))
-                    })
+                    .hover(move |style| style.bg(components::color(colors.bg_window)))
                     .id(("service-row", index))
-                    .on_click(cx.listener(move |this, event, window, cx| {
-                        this.select_service(index, event, window, cx)
-                    }))
-                    .child(div().w(px(250.)).child(service.name.clone()))
-                    .child(div().w(px(280.)).child(service.display_name.clone()))
+                    .child(div().w(px(170.)).child(service.name.clone()))
+                    .child(div().w(px(180.)).child(service.display_name.clone()))
                     .child(div().w(px(SERVICE_STATUS_COLUMN_WIDTH)).child(
                         components::status_badge(
                             status_label(status, translations),
@@ -714,6 +593,7 @@ impl MainWindow {
                                 message.to_string()
                             }),
                     )
+                    .child(actions)
             });
 
         let body = if state.managed_services().is_empty() {
@@ -743,7 +623,6 @@ impl MainWindow {
             .flex_col()
             .size_full()
             .p_6()
-            .child(summary_row)
             .child(toolbar)
             .child(body)
     }
@@ -1113,18 +992,6 @@ impl MainWindow {
         self.begin_add_dialog(cx);
     }
 
-    fn delete_clicked(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        self.update_state(cx, |state| state.remove_selected_service());
-    }
-
-    fn start_clicked(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        self.start_selected(cx);
-    }
-
-    fn stop_clicked(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        self.stop_selected(cx);
-    }
-
     fn start_all_clicked(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         self.start_all(cx);
     }
@@ -1266,8 +1133,8 @@ fn tool_text(translations: &crate::i18n::Translations, key: &str) -> &'static st
 
 #[cfg(test)]
 mod tests {
-    use super::{service_summary, MainWindow, ServiceSummary, SERVICE_STATUS_COLUMN_WIDTH, TOOLS};
-    use crate::app::{AppState, ServiceStatus};
+    use super::{MainWindow, SERVICE_STATUS_COLUMN_WIDTH, TOOLS};
+    use crate::app::AppState;
     use gpui::{point, px, size, AppContext, Modifiers, MouseButton, TestAppContext};
 
     #[gpui::test]
@@ -1294,7 +1161,7 @@ mod tests {
         let _ = visual_cx.draw(point(px(0.), px(0.)), size(px(900.), px(600.)), |_, _| {
             view.clone()
         });
-        assert!(visual_cx.debug_bounds("service-summary").is_some());
+        assert!(visual_cx.debug_bounds("service-summary").is_none());
     }
 
     #[gpui::test]
@@ -1318,34 +1185,12 @@ mod tests {
 
     #[test]
     fn service_status_column_is_compact() {
-        assert_eq!(SERVICE_STATUS_COLUMN_WIDTH, 96.);
+        assert_eq!(SERVICE_STATUS_COLUMN_WIDTH, 80.);
     }
 
     #[test]
     fn tools_catalog_contains_only_system_info() {
         assert_eq!(TOOLS.len(), 1);
         assert_eq!(TOOLS[0], ("tool_sysinfo", "tool_sysinfo_desc"));
-    }
-
-    #[test]
-    fn service_summary_counts_statuses() {
-        let summary = service_summary([
-            ServiceStatus::Running,
-            ServiceStatus::Stopped,
-            ServiceStatus::Starting,
-            ServiceStatus::Stopping,
-            ServiceStatus::Refreshing,
-            ServiceStatus::Unknown,
-        ]);
-
-        assert_eq!(
-            summary,
-            ServiceSummary {
-                total: 6,
-                running: 1,
-                stopped: 1,
-                pending: 3,
-            }
-        );
     }
 }

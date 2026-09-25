@@ -101,7 +101,6 @@ pub struct AppState {
     settings_file: PathBuf,
     language: Language,
     theme: Theme,
-    selected_service: Option<usize>,
     settings_selected: usize,
     tools_selected: usize,
     scripts_selected: usize,
@@ -126,8 +125,6 @@ impl AppState {
         let settings_file = app_dir.join("settings.json");
         let managed_services = app_service::load_managed_services(&data_file);
         let settings = load_settings(&settings_file);
-        let selected_service = (!managed_services.is_empty()).then_some(0);
-
         Self {
             current_view: View::Service,
             managed_services,
@@ -137,7 +134,6 @@ impl AppState {
             settings_file,
             language: settings.language,
             theme: settings.theme,
-            selected_service,
             settings_selected: 0,
             tools_selected: 0,
             scripts_selected: 0,
@@ -176,16 +172,6 @@ impl AppState {
         self.service_messages.get(name).map(String::as_str)
     }
 
-    pub fn selected_service(&self) -> Option<usize> {
-        self.selected_service
-    }
-
-    pub fn select_service(&mut self, index: usize) {
-        if index < self.managed_services.len() {
-            self.selected_service = Some(index);
-        }
-    }
-
     pub fn request_refresh(&mut self) -> PendingAction {
         for service in &self.managed_services {
             self.service_statuses
@@ -195,16 +181,26 @@ impl AppState {
         PendingAction::RefreshAll(self.service_names())
     }
 
-    pub fn request_start_selected(&mut self) -> Option<PendingAction> {
-        let name = self.selected_service_name()?;
+    pub fn request_start_service(&mut self, name: &str) -> Option<PendingAction> {
+        let name = self
+            .managed_services
+            .iter()
+            .find(|service| service.name == name)?
+            .name
+            .clone();
         self.service_statuses
             .insert(name.clone(), ServiceStatus::Starting);
         self.operation_state = OperationState::Starting;
         Some(PendingAction::StartService(name))
     }
 
-    pub fn request_stop_selected(&mut self) -> Option<PendingAction> {
-        let name = self.selected_service_name()?;
+    pub fn request_stop_service(&mut self, name: &str) -> Option<PendingAction> {
+        let name = self
+            .managed_services
+            .iter()
+            .find(|service| service.name == name)?
+            .name
+            .clone();
         self.service_statuses
             .insert(name.clone(), ServiceStatus::Stopping);
         self.operation_state = OperationState::Stopping;
@@ -253,24 +249,19 @@ impl AppState {
         self.operation_state
     }
 
-    pub fn remove_selected_service(&mut self) {
-        let Some(index) = self.selected_service else {
+    pub fn remove_service(&mut self, name: &str) {
+        let Some(index) = self
+            .managed_services
+            .iter()
+            .position(|service| service.name == name)
+        else {
             return;
         };
-        if index >= self.managed_services.len() {
-            return;
-        }
 
         let name = self.managed_services.remove(index).name;
         self.service_statuses.remove(&name);
         self.service_messages.remove(&name);
         app_service::save_managed_services(&self.data_file, &self.managed_services);
-
-        self.selected_service = if self.managed_services.is_empty() {
-            None
-        } else {
-            Some(index.min(self.managed_services.len() - 1))
-        };
     }
 
     pub fn begin_add_dialog(&mut self) {
@@ -372,9 +363,6 @@ impl AppState {
             enabled: true,
         });
         app_service::save_managed_services(&self.data_file, &self.managed_services);
-        if self.selected_service.is_none() {
-            self.selected_service = Some(0);
-        }
         self.close_add_dialog();
         true
     }
@@ -492,12 +480,6 @@ impl AppState {
             Err(error) => map_error(&error, self.language),
         });
         self.operation_state = OperationState::Idle;
-    }
-
-    fn selected_service_name(&self) -> Option<String> {
-        self.selected_service
-            .and_then(|index| self.managed_services.get(index))
-            .map(|service| service.name.clone())
     }
 
     fn service_names(&self) -> Vec<String> {

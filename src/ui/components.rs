@@ -51,6 +51,7 @@ pub fn card(colors: &ThemeColors) -> Div {
         .bg(color(colors.bg_surface))
 }
 
+#[cfg(test)]
 pub fn stat_card(
     label: impl Into<SharedString>,
     value: usize,
