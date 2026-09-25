@@ -1,18 +1,53 @@
-use gpui::{
-    div, prelude::*, px, rgb, AppContext, ClickEvent, Context, Div, Entity, FocusHandle,
-    KeyDownEvent, Render, Window, WindowControlArea,
-};
+use std::ops::Range;
 
-use crate::app::{AppState, OperationState, PendingAction, ServiceStatus, View};
+use gpui::{
+    canvas, div, point, prelude::*, px, rgba, AppContext, Bounds, ClickEvent, Context, Div,
+    DragMoveEvent, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, FontWeight,
+    KeyDownEvent, Pixels, Point, Render, ScrollHandle, Timer, UTF16Selection, Window,
+    WindowControlArea,
+};
+use std::time::Duration;
+
+use crate::app::{AppState, OperationState, PendingAction, ServiceStatus, Theme, View};
 use crate::backend::{self, ServiceOperation};
+use crate::i18n::Language;
+use crate::theme::{StatusColors, ThemeColors};
 use crate::ui::{components, input};
 
 const TOOLS: [(&str, &str); 1] = [("tool_sysinfo", "tool_sysinfo_desc")];
-const SERVICE_STATUS_COLUMN_WIDTH: f32 = 80.;
+
+const SERVICE_NAME_COLUMN_WIDTH: f32 = 180.;
+const SERVICE_DISPLAY_COLUMN_WIDTH: f32 = 200.;
+const SERVICE_STATUS_COLUMN_WIDTH: f32 = 96.;
+const SERVICE_ACTIONS_COLUMN_WIDTH: f32 = 168.;
+
+const ICON_SERVICE: &str = "▤";
+const ICON_TOOLS: &str = "▦";
+const ICON_SCRIPTS: &str = "⟳";
+const ICON_SETTINGS: &str = "⚙︎";
 
 pub struct MainWindow {
     pub(crate) state: Entity<AppState>,
     pub(crate) focus_handle: FocusHandle,
+    search_focus: FocusHandle,
+    service_scroll: ScrollHandle,
+    dialog_scroll: ScrollHandle,
+    sysinfo_scroll: ScrollHandle,
+}
+
+/// Payload carried while dragging a custom scrollbar thumb.
+#[derive(Clone)]
+struct ScrollbarDrag {
+    handle: ScrollHandle,
+}
+
+/// Invisible preview view for the scrollbar drag interaction.
+struct ScrollbarDragPreview;
+
+impl Render for ScrollbarDragPreview {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
 }
 
 impl MainWindow {
@@ -20,6 +55,10 @@ impl MainWindow {
         Self {
             state,
             focus_handle: cx.focus_handle(),
+            search_focus: cx.focus_handle(),
+            service_scroll: ScrollHandle::new(),
+            dialog_scroll: ScrollHandle::new(),
+            sysinfo_scroll: ScrollHandle::new(),
         }
     }
 
@@ -57,18 +96,10 @@ impl MainWindow {
     }
 
     fn handle_dialog_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        match input::text_editing_input(event) {
-            Some(input::TextEditingInput::Backspace) => {
-                self.update_state(cx, |state| state.add_dialog_backspace());
-            }
-            Some(input::TextEditingInput::Text(value)) => {
-                self.update_state(cx, move |state| {
-                    for character in value.chars() {
-                        state.add_dialog_input(character);
-                    }
-                });
-            }
-            None => {}
+        // Text insertion is owned by the platform input handler (WM_CHAR / IME).
+        // Here we only handle editing keys that are filtered out of WM_CHAR.
+        if input::text_editing_input(event) == Some(input::TextEditingInput::Backspace) {
+            self.update_state(cx, |state| state.add_dialog_backspace());
         }
     }
 
@@ -109,17 +140,25 @@ impl MainWindow {
         self.update_state(cx, move |state| state.select_add_dialog(index));
     }
 
-    fn select_setting(
-        &mut self,
-        index: usize,
-        _event: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.update_state(cx, move |state| state.select_setting(index));
+    fn set_language_zh(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        self.update_state(cx, |state| state.set_language(Language::Chinese));
+    }
+
+    fn set_language_en(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        self.update_state(cx, |state| state.set_language(Language::English));
+    }
+
+    fn set_theme_dark(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        self.update_state(cx, |state| state.set_theme(Theme::Dark));
+    }
+
+    fn set_theme_light(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        self.update_state(cx, |state| state.set_theme(Theme::Light));
     }
 
     fn begin_add_dialog(&mut self, cx: &mut Context<Self>) {
+        // Fresh handle so the custom scrollbar re-measures for this dialog.
+        self.dialog_scroll = ScrollHandle::new();
         self.update_state(cx, |state| state.begin_add_dialog());
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
@@ -132,6 +171,10 @@ impl MainWindow {
                     cx.notify();
                 })
                 .ok();
+            // The custom scrollbar reads its metrics after the list has been
+            // laid out, so it needs one more frame to appear.
+            Timer::after(Duration::from_millis(100)).await;
+            state.update(cx, |_state, cx| cx.notify()).ok();
         })
         .detach();
     }
@@ -222,6 +265,8 @@ impl MainWindow {
                     cx.notify();
                 })
                 .ok();
+            Timer::after(Duration::from_millis(100)).await;
+            state.update(cx, |_state, cx| cx.notify()).ok();
         })
         .detach();
     }
@@ -244,6 +289,8 @@ impl MainWindow {
                         cx.notify();
                     })
                     .ok();
+                Timer::after(Duration::from_millis(100)).await;
+                state.update(cx, |_state, cx| cx.notify()).ok();
             })
             .detach();
         }
@@ -284,15 +331,19 @@ impl MainWindow {
             .flex()
             .items_center()
             .w_full()
-            .h(px(48.))
+            .h(px(40.))
             .flex_shrink_0()
-            .bg(components::color(colors.bg_surface))
+            .bg(components::color(colors.bg.canvas))
+            .border_b_1()
+            .border_color(components::color(colors.border.subtle))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .px_4()
+                    .pl_4()
+                    .pr_6()
+                    .h_full()
                     .flex_shrink_0()
                     .window_control_area(WindowControlArea::Drag)
                     .child(
@@ -300,18 +351,20 @@ impl MainWindow {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .w(px(26.))
-                            .h(px(26.))
+                            .w(px(22.))
+                            .h(px(22.))
                             .rounded_md()
-                            .bg(components::color(colors.primary))
-                            .text_color(components::color(0xffffff))
-                            .text_sm()
+                            .bg(components::color(colors.brand.fill))
+                            .text_color(components::color(colors.fg.on_accent))
+                            .text_xs()
+                            .font_weight(FontWeight::BOLD)
                             .child("R"),
                     )
                     .child(
                         div()
                             .text_sm()
-                            .text_color(components::color(colors.fg_default))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(components::color(colors.fg.default))
                             .child(translations.app_title),
                     ),
             )
@@ -340,11 +393,12 @@ impl MainWindow {
 
     fn render_sidebar(&self, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
-        let navigation: [(View, &str); 4] = [
-            (View::Service, translations.tab_service),
-            (View::Tools, translations.tab_tools),
-            (View::Scripts, translations.tab_scripts),
-            (View::Settings, translations.tab_settings),
+        let colors = state.theme_colors();
+        let navigation: [(View, &str, &str); 4] = [
+            (View::Service, ICON_SERVICE, translations.tab_service),
+            (View::Tools, ICON_TOOLS, translations.tab_tools),
+            (View::Scripts, ICON_SCRIPTS, translations.tab_scripts),
+            (View::Settings, ICON_SETTINGS, translations.tab_settings),
         ];
 
         div()
@@ -353,49 +407,18 @@ impl MainWindow {
             .w(px(220.))
             .h_full()
             .flex_shrink_0()
-            .p_3()
+            .px_3()
+            .py_4()
             .gap_1()
-            .bg(components::color(state.theme_colors().bg_sidebar))
+            .bg(components::color(colors.bg.sidebar))
             .border_r_1()
-            .border_color(components::color(state.theme_colors().border))
+            .border_color(components::color(colors.border.subtle))
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .w_full()
-                    .h(px(64.))
-                    .px_2()
-                    .mb_2()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(34.))
-                            .h(px(34.))
-                            .rounded_lg()
-                            .bg(components::color(state.theme_colors().primary))
-                            .text_color(components::color(0xffffff))
-                            .text_lg()
-                            .child("R"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(components::color(state.theme_colors().fg_default))
-                            .child(translations.app_title),
-                    ),
+                components::section_label(translations.nav_section, colors)
+                    .px_3()
+                    .pb_2(),
             )
-            .child(
-                div()
-                    .px_2()
-                    .pb_2()
-                    .text_xs()
-                    .text_color(components::color(state.theme_colors().inactive))
-                    .child("NAVIGATION"),
-            )
-            .children(navigation.into_iter().map(|(view, label)| {
+            .children(navigation.into_iter().map(|(view, icon, label)| {
                 let selected = state.current_view() == view;
                 let id = match view {
                     View::Service => "sidebar-service",
@@ -403,7 +426,7 @@ impl MainWindow {
                     View::Scripts => "sidebar-scripts",
                     View::Settings => "sidebar-settings",
                 };
-                components::sidebar_item(label.trim(), state.theme_colors(), selected)
+                components::sidebar_item(icon, label.trim(), colors, selected)
                     .id(id)
                     .on_click(cx.listener(move |this, event, window, cx| {
                         this.select_view(view, event, window, cx)
@@ -413,6 +436,7 @@ impl MainWindow {
 
     fn render_content_header(&self, state: &AppState) -> Div {
         let translations = state.t();
+        let colors = state.theme_colors();
         let (title, description) =
             if state.current_view() == View::Tools && state.tool_detail_active() {
                 (translations.sysinfo_title, translations.tool_sysinfo_desc)
@@ -429,92 +453,198 @@ impl MainWindow {
             };
         div()
             .flex()
-            .items_center()
+            .flex_col()
+            .justify_center()
+            .gap_1()
             .w_full()
-            .h(px(84.))
+            .h(px(72.))
             .px_6()
             .flex_shrink_0()
             .border_b_1()
-            .border_color(components::color(state.theme_colors().border))
+            .border_color(components::color(colors.border.subtle))
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_2xl()
-                            .text_color(components::color(state.theme_colors().fg_default))
-                            .child(title),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(components::color(state.theme_colors().inactive))
-                            .child(description),
-                    ),
+                    .text_xl()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(components::color(colors.fg.default))
+                    .child(title),
             )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(components::color(colors.fg.muted))
+                    .child(description),
+            )
+    }
+
+    /// Custom scrollbar: GPUI 0.2.2 does not paint scrollbars, so the track and
+    /// thumb are drawn here and driven by a `ScrollHandle`.
+    fn render_scrollbar(
+        &self,
+        handle: &ScrollHandle,
+        colors: &ThemeColors,
+        cx: &Context<Self>,
+        id: &'static str,
+        thumb_id: &'static str,
+    ) -> gpui::Stateful<Div> {
+        let viewport = f32::from(handle.bounds().size.height);
+        let max_offset = f32::from(handle.max_offset().height);
+        let track = div().relative().flex_shrink_0().w(px(10.)).h_full().id(id);
+
+        if max_offset <= 0.0 || viewport <= 0.0 {
+            return track;
+        }
+
+        let ratio = viewport / (viewport + max_offset);
+        let thumb_height = (viewport * ratio).max(24.0);
+        let scrolled = f32::from(-handle.offset().y).clamp(0.0, max_offset);
+        let travel = (viewport - thumb_height).max(1.0);
+        let thumb_top = travel * (scrolled / max_offset);
+
+        track.child(
+            div()
+                .absolute()
+                .top(px(thumb_top))
+                .right(px(2.))
+                .w(px(6.))
+                .h(px(thumb_height))
+                .rounded_full()
+                .bg(components::color(colors.fg.subtle))
+                .cursor_pointer()
+                .hover(move |style| style.bg(components::color(colors.fg.muted)))
+                .id(thumb_id)
+                .on_drag_move::<ScrollbarDrag>(cx.listener(Self::on_scrollbar_drag))
+                .on_drag(
+                    ScrollbarDrag {
+                        handle: handle.clone(),
+                    },
+                    |_, _, _, cx| cx.new(|_| ScrollbarDragPreview),
+                ),
+        )
+    }
+
+    fn on_scrollbar_drag(
+        &mut self,
+        event: &DragMoveEvent<ScrollbarDrag>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let handle = event.drag(cx).handle.clone();
+        let viewport = f32::from(handle.bounds().size.height);
+        let max_offset = f32::from(handle.max_offset().height);
+        if max_offset <= 0.0 || viewport <= 0.0 {
+            return;
+        }
+        let track_top = f32::from(handle.bounds().origin.y);
+        let track_height = viewport;
+        let thumb_height = (viewport * (viewport / (viewport + max_offset))).max(24.0);
+        let travel = (track_height - thumb_height).max(1.0);
+        let pointer = f32::from(event.event.position.y);
+        let fraction = ((pointer - track_top - thumb_height / 2.0) / travel).clamp(0.0, 1.0);
+        handle.set_offset(point(px(0.), px(-(max_offset * fraction))));
+        cx.notify();
+    }
+
+    /// Keeps custom scrollbars in sync while the user scrolls with the wheel.
+    fn on_scrolled(
+        &mut self,
+        _event: &gpui::ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.notify();
     }
 
     fn render_service_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
-        let primary_actions = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(
-                components::button(translations.hint_add, colors, true)
-                    .id("service-add")
-                    .on_click(cx.listener(Self::add_clicked)),
-            )
-            .child(
-                components::button(translations.hint_refresh, colors, false)
-                    .id("service-refresh")
-                    .on_click(cx.listener(Self::refresh_clicked)),
-            );
-        let batch_actions = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(
-                components::button(translations.hint_start_all, colors, false)
-                    .id("service-start-all")
-                    .on_click(cx.listener(Self::start_all_clicked)),
-            )
-            .child(
-                components::button(translations.hint_stop_all, colors, false)
-                    .id("service-stop-all")
-                    .on_click(cx.listener(Self::stop_all_clicked)),
-            );
+
         let toolbar = div()
             .flex()
             .items_center()
             .justify_between()
             .w_full()
-            .mb_4()
-            .child(primary_actions)
-            .child(batch_actions);
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        components::button(
+                            translations.hint_add,
+                            colors,
+                            components::ButtonVariant::Primary,
+                        )
+                        .id("service-add")
+                        .debug_selector(|| "service-add".to_string())
+                        .on_click(cx.listener(Self::add_clicked)),
+                    )
+                    .child(
+                        components::button(
+                            translations.hint_refresh,
+                            colors,
+                            components::ButtonVariant::Ghost,
+                        )
+                        .id("service-refresh")
+                        .on_click(cx.listener(Self::refresh_clicked)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        components::button(
+                            translations.hint_start_all,
+                            colors,
+                            components::ButtonVariant::Secondary,
+                        )
+                        .id("service-start-all")
+                        .on_click(cx.listener(Self::start_all_clicked)),
+                    )
+                    .child(
+                        components::button(
+                            translations.hint_stop_all,
+                            colors,
+                            components::ButtonVariant::Secondary,
+                        )
+                        .id("service-stop-all")
+                        .on_click(cx.listener(Self::stop_all_clicked)),
+                    ),
+            );
 
         let header = div()
             .flex()
             .items_center()
             .w_full()
-            .h(px(40.))
+            .h(px(36.))
             .px_3()
-            .rounded_md()
-            .bg(components::color(colors.bg_window))
-            .text_sm()
-            .text_color(components::color(colors.inactive))
-            .child(div().w(px(170.)).child(translations.col_name))
-            .child(div().w(px(180.)).child(translations.col_display))
+            .bg(components::color(colors.bg.muted))
+            .text_xs()
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(components::color(colors.fg.muted))
+            .child(
+                div()
+                    .w(px(SERVICE_NAME_COLUMN_WIDTH))
+                    .child(translations.col_name),
+            )
+            .child(
+                div()
+                    .w(px(SERVICE_DISPLAY_COLUMN_WIDTH))
+                    .child(translations.col_display),
+            )
             .child(
                 div()
                     .w(px(SERVICE_STATUS_COLUMN_WIDTH))
                     .child(translations.col_status),
             )
             .child(div().flex_1().child(translations.col_message))
-            .child(div().w(px(150.)).child(translations.col_actions));
+            .child(
+                div()
+                    .w(px(SERVICE_ACTIONS_COLUMN_WIDTH))
+                    .child(translations.col_actions),
+            );
 
         let rows = state
             .managed_services()
@@ -531,33 +661,49 @@ impl MainWindow {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .w(px(150.))
+                    .w(px(SERVICE_ACTIONS_COLUMN_WIDTH))
                     .child(
-                        components::button(translations.hint_start, colors, false)
-                            .px_1()
-                            .id(("service-start", index))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.start_service(start_name.clone(), cx)
-                            })),
+                        components::button(
+                            translations.hint_start,
+                            colors,
+                            components::ButtonVariant::Ghost,
+                        )
+                        .h(px(28.))
+                        .px_2()
+                        .text_xs()
+                        .id(("service-start", index))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.start_service(start_name.clone(), cx)
+                        })),
                     )
                     .child(
-                        components::button(translations.hint_stop, colors, false)
-                            .px_1()
-                            .id(("service-stop", index))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.stop_service(stop_name.clone(), cx)
-                            })),
+                        components::button(
+                            translations.hint_stop,
+                            colors,
+                            components::ButtonVariant::Ghost,
+                        )
+                        .h(px(28.))
+                        .px_2()
+                        .text_xs()
+                        .id(("service-stop", index))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.stop_service(stop_name.clone(), cx)
+                        })),
                     )
                     .child(
-                        components::button(translations.hint_delete, colors, false)
-                            .px_1()
-                            .id(("service-delete", index))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                let delete_name = delete_name.clone();
-                                this.update_state(cx, move |state| {
-                                    state.remove_service(&delete_name)
-                                })
-                            })),
+                        components::button(
+                            translations.hint_delete,
+                            colors,
+                            components::ButtonVariant::Danger,
+                        )
+                        .h(px(28.))
+                        .px_2()
+                        .text_xs()
+                        .id(("service-delete", index))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let delete_name = delete_name.clone();
+                            this.update_state(cx, move |state| state.remove_service(&delete_name))
+                        })),
                     );
                 div()
                     .flex()
@@ -566,26 +712,49 @@ impl MainWindow {
                     .min_h(px(52.))
                     .px_3()
                     .border_b_1()
-                    .border_color(components::color(colors.border))
-                    .bg(components::color(colors.bg_surface))
-                    .text_color(components::color(colors.fg_default))
-                    .hover(move |style| style.bg(components::color(colors.bg_window)))
+                    .border_color(components::color(colors.border.subtle))
+                    .bg(components::color(colors.bg.surface))
+                    .text_sm()
+                    .text_color(components::color(colors.fg.default))
+                    .hover(move |style| style.bg(components::color(colors.bg.surface_hover)))
                     .id(("service-row", index))
-                    .child(div().w(px(170.)).child(service.name.clone()))
-                    .child(div().w(px(180.)).child(service.display_name.clone()))
-                    .child(div().w(px(SERVICE_STATUS_COLUMN_WIDTH)).child(
-                        components::status_badge(
-                            status_label(status, translations),
-                            status_color(status, colors),
-                        ),
-                    ))
+                    .child(
+                        div()
+                            .w(px(SERVICE_NAME_COLUMN_WIDTH))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(service.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .w(px(SERVICE_DISPLAY_COLUMN_WIDTH))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(components::color(colors.fg.muted))
+                            .child(service.display_name.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .w(px(SERVICE_STATUS_COLUMN_WIDTH))
+                            .child(components::badge(
+                                status_label(status, translations),
+                                status_colors(status, colors),
+                            )),
+                    )
                     .child(
                         div()
                             .flex_1()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
                             .text_color(components::color(if message.is_empty() {
-                                colors.inactive
+                                colors.fg.subtle
                             } else {
-                                colors.error
+                                colors.danger.text
                             }))
                             .child(if message.is_empty() {
                                 "—".to_string()
@@ -599,28 +768,58 @@ impl MainWindow {
         let body = if state.managed_services().is_empty() {
             components::card(colors)
                 .flex_1()
+                .flex()
                 .items_center()
                 .justify_center()
-                .text_color(components::color(colors.inactive))
                 .id("service-empty")
-                .child(translations.svc_empty)
+                .child(components::empty_state(
+                    ICON_SERVICE,
+                    translations.svc_header,
+                    translations.svc_empty,
+                    colors,
+                ))
         } else {
             components::card(colors)
                 .flex()
                 .flex_col()
-                .gap_1()
                 .w_full()
                 .flex_1()
-                .p_3()
+                .overflow_hidden()
+                .id("service-table")
                 .child(header)
-                .children(rows)
-                .id("service-list")
-                .overflow_y_scroll()
+                .child(
+                    div()
+                        .flex()
+                        .w_full()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .h_full()
+                                .id("service-list")
+                                .overflow_y_scroll()
+                                .track_scroll(&self.service_scroll)
+                                .on_scroll_wheel(cx.listener(Self::on_scrolled))
+                                .children(rows),
+                        )
+                        .child(self.render_scrollbar(
+                            &self.service_scroll,
+                            colors,
+                            cx,
+                            "service-scrollbar",
+                            "service-thumb",
+                        )),
+                )
         };
 
         div()
             .flex()
             .flex_col()
+            .gap_4()
             .size_full()
             .p_6()
             .child(toolbar)
@@ -642,21 +841,20 @@ impl MainWindow {
                 let selected = state.tools_selected() == index;
                 components::card(colors)
                     .flex()
-                    .flex_col()
-                    .gap_1()
+                    .items_center()
+                    .gap_3()
                     .p_4()
-                    .border_color(components::color(if selected {
-                        colors.primary
-                    } else {
-                        colors.border
-                    }))
-                    .bg(if selected {
-                        components::color(colors.bg_select)
-                    } else {
-                        components::color(colors.bg_surface)
-                    })
-                    .text_color(components::color(colors.fg_default))
                     .cursor_pointer()
+                    .border_color(components::color(if selected {
+                        colors.brand.primary
+                    } else {
+                        colors.border.subtle
+                    }))
+                    .bg(components::color(if selected {
+                        colors.brand.soft
+                    } else {
+                        colors.bg.surface
+                    }))
                     .id(("tool-row", index))
                     .on_click(cx.listener(move |this, event, window, cx| {
                         this.select_tool(index, event, window, cx);
@@ -664,15 +862,52 @@ impl MainWindow {
                             this.open_tool(cx);
                         }
                     }))
-                    .child(div().text_lg().child(label))
                     .child(
                         div()
-                            .text_sm()
-                            .text_color(components::color(colors.inactive))
-                            .child(description),
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(40.))
+                            .h(px(40.))
+                            .rounded_lg()
+                            .flex_shrink_0()
+                            .bg(components::color(if selected {
+                                colors.bg.surface
+                            } else {
+                                colors.bg.muted
+                            }))
+                            .text_lg()
+                            .text_color(components::color(colors.brand.primary))
+                            .child(ICON_TOOLS),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .flex_1()
+                            .child(
+                                div()
+                                    .text_base()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(components::color(colors.fg.default))
+                                    .child(label),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(components::color(colors.fg.muted))
+                                    .child(description),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_lg()
+                            .text_color(components::color(colors.fg.subtle))
+                            .child("›"),
                     )
             });
-        div().flex().flex_col().gap_3().size_full().p_6().child(
+        div().flex().flex_col().size_full().p_6().child(
             div()
                 .flex()
                 .flex_col()
@@ -691,56 +926,69 @@ impl MainWindow {
         let content = if state.system_info_loading() {
             div()
                 .flex_1()
+                .flex()
                 .items_center()
                 .justify_center()
-                .text_color(components::color(colors.inactive))
+                .text_color(components::color(colors.fg.muted))
+                .id("system-info-loading")
                 .child(translations.sysinfo_fetching)
         } else if let Some(info) = state.system_info() {
-            let rows = [
+            let system_rows = [
                 (translations.sysinfo_os, info.os.as_str()),
                 (translations.sysinfo_version, info.version.as_str()),
                 (translations.sysinfo_build, info.build.as_str()),
                 (translations.sysinfo_computer, info.computer.as_str()),
                 (translations.sysinfo_user, info.user.as_str()),
+            ];
+            let hardware_rows = [
                 (translations.sysinfo_cpu, info.cpu.as_str()),
                 (translations.sysinfo_cores, info.cores.as_str()),
                 (translations.sysinfo_ram, info.ram.as_str()),
             ];
-            components::card(colors)
+            div()
                 .flex()
-                .flex_col()
-                .gap_2()
                 .w_full()
                 .flex_1()
-                .p_3()
-                .children(rows.into_iter().map(|(label, value)| {
+                .overflow_hidden()
+                .id("system-info-scroll")
+                .child(
                     div()
                         .flex()
-                        .w_full()
-                        .p_3()
-                        .rounded_md()
-                        .bg(components::color(colors.bg_window))
-                        .border_1()
-                        .border_color(components::color(colors.border))
-                        .child(
-                            div()
-                                .w(px(180.))
-                                .text_color(components::color(colors.inactive))
-                                .child(label),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_color(components::color(colors.fg_default))
-                                .child(value.to_string()),
-                        )
-                }))
+                        .items_start()
+                        .gap_4()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .h_full()
+                        .id("system-info-groups")
+                        .overflow_y_scroll()
+                        .track_scroll(&self.sysinfo_scroll)
+                        .on_scroll_wheel(cx.listener(Self::on_scrolled))
+                        .child(info_group(
+                            translations.sysinfo_group_system,
+                            &system_rows,
+                            colors,
+                        ))
+                        .child(info_group(
+                            translations.sysinfo_group_hardware,
+                            &hardware_rows,
+                            colors,
+                        )),
+                )
+                .child(self.render_scrollbar(
+                    &self.sysinfo_scroll,
+                    colors,
+                    cx,
+                    "sysinfo-scrollbar",
+                    "sysinfo-thumb",
+                ))
         } else {
             div()
                 .flex_1()
+                .flex()
                 .items_center()
                 .justify_center()
-                .text_color(components::color(colors.error))
+                .text_color(components::color(colors.danger.text))
+                .id("system-info-error")
                 .child(translations.err_failed)
         };
         div()
@@ -751,11 +999,15 @@ impl MainWindow {
             .p_6()
             .child(
                 div().flex().justify_end().child(
-                    components::button(translations.sysinfo_back, colors, false)
-                        .id("sysinfo-back")
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.update_state(cx, |state| state.close_tool_detail());
-                        })),
+                    components::button(
+                        translations.sysinfo_back,
+                        colors,
+                        components::ButtonVariant::Secondary,
+                    )
+                    .id("sysinfo-back")
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.update_state(cx, |state| state.close_tool_detail());
+                    })),
                 ),
             )
             .child(content)
@@ -774,32 +1026,51 @@ impl MainWindow {
             .id("script-reset-navicat")
             .on_click(cx.listener(Self::script_clicked))
             .child(
-                div().flex_1().child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(div().text_lg().child(translations.script_reset_navicat))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(components::color(colors.inactive))
-                                .child(translations.script_reset_navicat_desc),
-                        ),
-                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(40.))
+                    .h(px(40.))
+                    .rounded_lg()
+                    .flex_shrink_0()
+                    .bg(components::color(colors.warning.soft))
+                    .text_lg()
+                    .text_color(components::color(colors.warning.text))
+                    .child(ICON_SCRIPTS),
             )
-            .child(components::button(translations.hint_confirm, colors, true).id("script-run"));
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .flex_1()
+                    .child(
+                        div()
+                            .text_base()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(components::color(colors.fg.default))
+                            .child(translations.script_reset_navicat),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(components::color(colors.fg.muted))
+                            .child(translations.script_reset_navicat_desc),
+                    ),
+            )
+            .child(
+                components::button(
+                    translations.hint_confirm,
+                    colors,
+                    components::ButtonVariant::Primary,
+                )
+                .id("script-run")
+                .on_click(cx.listener(Self::script_clicked)),
+            );
         let mut page = div().flex().flex_col().gap_4().size_full().p_6().child(row);
         if let Some(result) = state.script_result() {
-            page = page.child(
-                components::card(colors)
-                    .w_full()
-                    .p_3()
-                    .bg(components::color(colors.bg_select))
-                    .border_color(components::color(colors.primary))
-                    .text_color(components::color(colors.accent))
-                    .child(result.to_string()),
-            );
+            page = page.child(components::alert(result.to_string(), &colors.info));
         }
         page
     }
@@ -807,91 +1078,128 @@ impl MainWindow {
     fn render_settings_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
-        let rows = [
-            (
-                translations.setting_language,
-                state.language().name(),
-                0usize,
-            ),
-            (
-                translations.setting_theme,
-                match state.theme() {
-                    crate::app::Theme::Dark => translations.theme_dark,
-                    crate::app::Theme::Light => translations.theme_light,
-                },
-                1usize,
-            ),
-        ];
-        div().flex().flex_col().gap_3().size_full().p_6().child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .w_full()
-                .flex_1()
-                .children(rows.into_iter().map(|(label, value, index)| {
-                    let selected = state.settings_selected() == index;
-                    components::card(colors)
-                        .flex()
-                        .items_center()
-                        .p_4()
-                        .border_color(components::color(if selected {
-                            colors.primary
-                        } else {
-                            colors.border
-                        }))
-                        .bg(if selected {
-                            components::color(colors.bg_select)
-                        } else {
-                            components::color(colors.bg_surface)
-                        })
-                        .cursor_pointer()
-                        .id(("setting-row", index))
-                        .on_click(cx.listener(move |this, event, window, cx| {
-                            this.select_setting(index, event, window, cx);
-                            this.update_state(cx, move |state| {
-                                if index == 0 {
-                                    state.cycle_language();
-                                } else {
-                                    state.cycle_theme();
-                                }
-                            });
-                        }))
-                        .child(div().flex_1().child(label))
-                        .child(
-                            div()
-                                .text_color(components::color(colors.accent))
-                                .child(value),
+        let language = state.language();
+        let theme = state.theme();
+
+        let language_row = components::card(colors)
+            .flex()
+            .items_center()
+            .justify_between()
+            .p_4()
+            .id("setting-row-0")
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(components::color(colors.fg.default))
+                    .child(translations.setting_language),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        segment(
+                            Language::Chinese.name(),
+                            language == Language::Chinese,
+                            colors,
+                            "setting-language-zh",
                         )
-                })),
-        )
+                        .on_click(cx.listener(Self::set_language_zh)),
+                    )
+                    .child(
+                        segment(
+                            Language::English.name(),
+                            language == Language::English,
+                            colors,
+                            "setting-language-en",
+                        )
+                        .on_click(cx.listener(Self::set_language_en)),
+                    ),
+            );
+
+        let theme_row = components::card(colors)
+            .flex()
+            .items_center()
+            .justify_between()
+            .p_4()
+            .id("setting-row-1")
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(components::color(colors.fg.default))
+                    .child(translations.setting_theme),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        segment(
+                            translations.theme_dark,
+                            theme == Theme::Dark,
+                            colors,
+                            "setting-theme-dark",
+                        )
+                        .on_click(cx.listener(Self::set_theme_dark)),
+                    )
+                    .child(
+                        segment(
+                            translations.theme_light,
+                            theme == Theme::Light,
+                            colors,
+                            "setting-theme-light",
+                        )
+                        .on_click(cx.listener(Self::set_theme_light)),
+                    ),
+            );
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .size_full()
+            .p_6()
+            .child(language_row)
+            .child(theme_row)
     }
 
-    fn render_add_dialog(&self, state: &AppState, cx: &Context<Self>) -> Div {
+    fn render_add_dialog(&self, window: &Window, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
         let list = if state.add_dialog_loading() {
             div()
                 .flex_1()
+                .flex()
                 .items_center()
                 .justify_center()
+                .text_sm()
+                .text_color(components::color(colors.fg.muted))
                 .child(translations.status_refreshing)
                 .id("dialog-loading")
         } else if state.add_dialog_filtered().is_empty() {
             div()
                 .flex_1()
+                .flex()
                 .items_center()
                 .justify_center()
-                .child(translations.dialog_empty)
+                .child(components::empty_state(
+                    ICON_SERVICE,
+                    translations.dialog_empty,
+                    translations.dialog_search,
+                    colors,
+                ))
                 .id("dialog-empty")
         } else {
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .flex_1()
-                .children(state.add_dialog_filtered().iter().enumerate().map(
-                    |(index, &real_index)| {
+            let rows =
+                state
+                    .add_dialog_filtered()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, &real_index)| {
                         let service = &state.add_dialog_services()[real_index];
                         let selected = state.add_dialog_selected() == index;
                         div()
@@ -899,19 +1207,24 @@ impl MainWindow {
                             .items_center()
                             .w_full()
                             .p_3()
-                            .rounded_md()
+                            .rounded_lg()
                             .border_1()
                             .border_color(components::color(if selected {
-                                colors.primary
+                                colors.brand.primary
                             } else {
-                                colors.border
+                                colors.border.subtle
                             }))
-                            .bg(if selected {
-                                components::color(colors.bg_select)
+                            .bg(components::color(if selected {
+                                colors.brand.soft
                             } else {
-                                components::color(colors.bg_surface)
-                            })
+                                colors.bg.surface
+                            }))
+                            .text_sm()
+                            .text_color(components::color(colors.fg.default))
                             .cursor_pointer()
+                            .hover(move |style| {
+                                style.bg(components::color(colors.bg.surface_hover))
+                            })
                             .id(("dialog-service", index))
                             .on_click(cx.listener(move |this, event, window, cx| {
                                 this.select_dialog_service(index, event, window, cx);
@@ -919,18 +1232,82 @@ impl MainWindow {
                             .child(
                                 div()
                                     .flex_1()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
                                     .child(format!("{} — {}", service.name, service.display_name)),
                             )
-                    },
-                ))
-                .id("dialog-service-list")
-                .overflow_y_scroll()
-        };
-        let error = state.add_dialog_error().map(|error| {
+                    });
             div()
-                .text_color(components::color(colors.error))
-                .child(error.to_string())
-        });
+                .flex()
+                .flex_1()
+                .w_full()
+                .overflow_hidden()
+                .id("dialog-scroll-area")
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .h_full()
+                        .id("dialog-service-list")
+                        .overflow_y_scroll()
+                        .track_scroll(&self.dialog_scroll)
+                        .on_scroll_wheel(cx.listener(Self::on_scrolled))
+                        .children(rows),
+                )
+                .child(self.render_scrollbar(
+                    &self.dialog_scroll,
+                    colors,
+                    cx,
+                    "dialog-scrollbar",
+                    "dialog-thumb",
+                ))
+        };
+        let error = state
+            .add_dialog_error()
+            .map(|error| components::alert(error.to_string(), &colors.danger));
+        let count = translations
+            .dialog_count
+            .replace("{}", &state.add_dialog_filtered().len().to_string());
+
+        // The search field is the only text input. A transparent canvas overlay
+        // registers the platform input handler each paint, which is what enables
+        // IME composition (e.g. Chinese) on Windows.
+        let focused = self.search_focus.is_focused(window);
+        let input_entity = cx.entity();
+        let input_focus = self.search_focus.clone();
+        let search_input = canvas(
+            |_, _, _| (),
+            move |bounds, _, window, cx| {
+                window.handle_input(
+                    &input_focus,
+                    ElementInputHandler::new(bounds, input_entity.clone()),
+                    cx,
+                );
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
+        let search = components::search_field(
+            state.add_dialog_search(),
+            state.add_dialog_marked(),
+            translations.dialog_search,
+            colors,
+            focused,
+        )
+        .relative()
+        .track_focus(&self.search_focus)
+        .cursor_text()
+        .focus(|style| style.border_color(components::color(colors.brand.primary)))
+        .id("dialog-search")
+        .on_click(cx.listener(Self::focus_search))
+        .child(search_input);
+
         div()
             .absolute()
             .top_0()
@@ -939,57 +1316,88 @@ impl MainWindow {
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgb(0x99000000))
+            .bg(rgba(0x00000099))
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_3()
-                    .w(px(620.))
-                    .h(px(500.))
+                    .gap_4()
+                    .w(px(560.))
+                    .h(px(520.))
                     .p_5()
-                    .rounded_lg()
-                    .shadow_lg()
-                    .bg(components::color(colors.bg_surface))
+                    .rounded_xl()
+                    .shadow_2xl()
+                    .bg(components::color(colors.bg.elevated))
                     .border_1()
-                    .border_color(components::color(colors.border))
-                    .text_color(components::color(colors.fg_default))
+                    .border_color(components::color(colors.border.default))
+                    .text_color(components::color(colors.fg.default))
                     .child(
-                        div().flex().items_center().justify_between().child(
-                            div()
-                                .text_xl()
-                                .text_color(components::color(colors.fg_default))
-                                .child(translations.dialog_add_title),
-                        ),
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .w_full()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(translations.dialog_add_title),
+                            )
+                            .child(
+                                components::button("✕", colors, components::ButtonVariant::Ghost)
+                                    .w(px(28.))
+                                    .h(px(28.))
+                                    .px_0()
+                                    .id("dialog-close")
+                                    .on_click(cx.listener(Self::close_dialog_clicked)),
+                            ),
                     )
-                    .child(components::search_field(
-                        state.add_dialog_search(),
-                        translations.dialog_search,
-                        colors,
-                    ))
+                    .child(search)
                     .children(error)
                     .child(list)
                     .child(
                         div()
                             .flex()
-                            .justify_end()
-                            .gap_2()
+                            .items_center()
+                            .justify_between()
+                            .w_full()
                             .child(
-                                components::button(translations.dialog_hint_cancel, colors, false)
-                                    .id("dialog-cancel")
-                                    .on_click(cx.listener(Self::cancel_dialog_clicked)),
+                                div()
+                                    .text_xs()
+                                    .text_color(components::color(colors.fg.subtle))
+                                    .child(count),
                             )
                             .child(
-                                components::button(translations.dialog_hint_add, colors, true)
-                                    .id("dialog-confirm")
-                                    .on_click(cx.listener(Self::confirm_dialog_clicked)),
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        components::button(
+                                            translations.dialog_hint_cancel,
+                                            colors,
+                                            components::ButtonVariant::Secondary,
+                                        )
+                                        .id("dialog-cancel")
+                                        .on_click(cx.listener(Self::cancel_dialog_clicked)),
+                                    )
+                                    .child(
+                                        components::button(
+                                            translations.dialog_hint_add,
+                                            colors,
+                                            components::ButtonVariant::Primary,
+                                        )
+                                        .id("dialog-confirm")
+                                        .on_click(cx.listener(Self::confirm_dialog_clicked)),
+                                    ),
                             ),
                     ),
             )
     }
 
-    fn add_clicked(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn add_clicked(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.begin_add_dialog(cx);
+        window.focus(&self.search_focus);
     }
 
     fn start_all_clicked(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1008,7 +1416,21 @@ impl MainWindow {
         self.run_script(cx);
     }
 
+    fn focus_search(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.search_focus);
+        cx.notify();
+    }
+
     fn cancel_dialog_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_state(cx, |state| state.close_add_dialog());
+    }
+
+    fn close_dialog_clicked(
         &mut self,
         _: &ClickEvent,
         _window: &mut Window,
@@ -1056,16 +1478,108 @@ impl Render for MainWindow {
                     .child(div().flex_1().w_full().child(page)),
             );
         if state.show_add_dialog() {
-            content = content.child(self.render_add_dialog(state, cx));
+            content = content.child(self.render_add_dialog(window, state, cx));
         }
         div()
             .size_full()
             .flex()
             .flex_col()
-            .bg(components::color(state.theme_colors().bg_window))
-            .text_color(components::color(state.theme_colors().fg_default))
+            .bg(components::color(state.theme_colors().bg.canvas))
+            .text_color(components::color(state.theme_colors().fg.default))
             .child(self.render_titlebar(window, state, cx))
             .child(content)
+    }
+}
+
+impl EntityInputHandler for MainWindow {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let text = self
+            .state
+            .read(cx)
+            .add_dialog_text_range(range_utf16.clone());
+        *adjusted_range = Some(range_utf16);
+        Some(text)
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let cursor = self.state.read(cx).add_dialog_text_utf16_len();
+        Some(UTF16Selection {
+            range: cursor..cursor,
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        self.state.read(cx).add_dialog_marked_range()
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.update_state(cx, |state| state.add_dialog_unmark());
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        replacement_range: Option<Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = text.to_string();
+        self.update_state(cx, move |state| match replacement_range {
+            Some(range) => state.add_dialog_replace_range(range, &text),
+            None => state.add_dialog_commit_text(&text),
+        });
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        _new_selected_range: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = new_text.to_string();
+        self.update_state(cx, move |state| {
+            if let Some(range) = range_utf16 {
+                state.add_dialog_replace_range(range, "");
+            }
+            state.add_dialog_set_marked(&text);
+        });
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        element_bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        Some(element_bounds)
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        None
     }
 }
 
@@ -1102,6 +1616,64 @@ fn toggle_window_zoom(window: &Window) {
     window.zoom_window();
 }
 
+/// A titled group of label/value rows for the system information page.
+fn info_group(title: &'static str, rows: &[(&str, &str)], colors: &ThemeColors) -> Div {
+    components::card(colors)
+        .flex()
+        .flex_col()
+        .gap_4()
+        .flex_1()
+        .p_4()
+        .child(components::card_title(title, colors))
+        .children(rows.iter().map(|(label, value)| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(components::color(colors.fg.subtle))
+                        .child((*label).to_string()),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(components::color(colors.fg.default))
+                        .child((*value).to_string()),
+                )
+        }))
+}
+
+/// A two-state pill used by the settings rows.
+fn segment(
+    label: &str,
+    active: bool,
+    colors: &ThemeColors,
+    id: &'static str,
+) -> gpui::Stateful<Div> {
+    let base = div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(px(28.))
+        .px_3()
+        .rounded_md()
+        .text_xs()
+        .font_weight(FontWeight::MEDIUM)
+        .cursor_pointer()
+        .id(id);
+    let base = if active {
+        base.bg(components::color(colors.brand.soft))
+            .text_color(components::color(colors.brand.primary))
+    } else {
+        base.bg(components::color(colors.bg.canvas))
+            .text_color(components::color(colors.fg.muted))
+            .hover(move |style| style.bg(components::color(colors.bg.surface_hover)))
+    };
+    base.child(label.to_string())
+}
+
 fn status_label(status: ServiceStatus, translations: &crate::i18n::Translations) -> &'static str {
     match status {
         ServiceStatus::Running => translations.status_running,
@@ -1112,14 +1684,14 @@ fn status_label(status: ServiceStatus, translations: &crate::i18n::Translations)
     }
 }
 
-fn status_color(status: ServiceStatus, colors: &crate::theme::ThemeColors) -> u32 {
+fn status_colors(status: ServiceStatus, colors: &ThemeColors) -> &StatusColors {
     match status {
-        ServiceStatus::Running => colors.success,
-        ServiceStatus::Stopped => colors.danger,
+        ServiceStatus::Running => &colors.success,
+        ServiceStatus::Stopped => &colors.danger,
         ServiceStatus::Starting | ServiceStatus::Stopping | ServiceStatus::Refreshing => {
-            colors.warning
+            &colors.warning
         }
-        ServiceStatus::Unknown => colors.inactive,
+        ServiceStatus::Unknown => &colors.info,
     }
 }
 
@@ -1161,7 +1733,7 @@ mod tests {
         let _ = visual_cx.draw(point(px(0.), px(0.)), size(px(900.), px(600.)), |_, _| {
             view.clone()
         });
-        assert!(visual_cx.debug_bounds("service-summary").is_none());
+        assert!(visual_cx.debug_bounds("service-add").is_some());
     }
 
     #[gpui::test]
@@ -1185,7 +1757,7 @@ mod tests {
 
     #[test]
     fn service_status_column_is_compact() {
-        assert_eq!(SERVICE_STATUS_COLUMN_WIDTH, 80.);
+        assert_eq!(SERVICE_STATUS_COLUMN_WIDTH, 96.);
     }
 
     #[test]

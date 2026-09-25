@@ -1,6 +1,7 @@
 use app_service::{ManagedService, ServiceInfo};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use crate::backend::BackendError;
@@ -9,7 +10,6 @@ use crate::theme::{ThemeColors, DARK, LIGHT};
 
 pub use crate::backend::SystemInfo;
 
-const SETTINGS_COUNT: usize = 2;
 const TOOLS_COUNT: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,15 +18,6 @@ pub enum Theme {
     Dark,
     #[serde(rename = "light")]
     Light,
-}
-
-impl Theme {
-    pub fn next(self) -> Self {
-        match self {
-            Self::Dark => Self::Light,
-            Self::Light => Self::Dark,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +80,9 @@ pub struct AddDialogState {
     filtered: Vec<usize>,
     selected: usize,
     search: String,
+    /// Text currently being composed by the platform IME. It is displayed but
+    /// not committed to `search` until the IME reports a result.
+    marked: String,
     error: Option<String>,
 }
 
@@ -101,7 +95,6 @@ pub struct AppState {
     settings_file: PathBuf,
     language: Language,
     theme: Theme,
-    settings_selected: usize,
     tools_selected: usize,
     scripts_selected: usize,
     script_result: Option<String>,
@@ -134,7 +127,6 @@ impl AppState {
             settings_file,
             language: settings.language,
             theme: settings.theme,
-            settings_selected: 0,
             tools_selected: 0,
             scripts_selected: 0,
             script_result: None,
@@ -318,17 +310,84 @@ impl AppState {
         &self.add_dialog.search
     }
 
+    /// Text being composed by the IME, rendered after the committed search text.
+    pub fn add_dialog_marked(&self) -> &str {
+        &self.add_dialog.marked
+    }
+
+    /// Committed search text followed by any in-progress composition.
+    pub fn add_dialog_full_text(&self) -> String {
+        let mut text = self.add_dialog.search.clone();
+        text.push_str(&self.add_dialog.marked);
+        text
+    }
+
+    /// Total length of the editable text in UTF-16 units, matching the
+    /// platform input protocol.
+    pub fn add_dialog_text_utf16_len(&self) -> usize {
+        utf16_len(&self.add_dialog.search) + utf16_len(&self.add_dialog.marked)
+    }
+
+    /// The UTF-16 range occupied by the IME composition, if any.
+    pub fn add_dialog_marked_range(&self) -> Option<Range<usize>> {
+        if self.add_dialog.marked.is_empty() {
+            None
+        } else {
+            let start = utf16_len(&self.add_dialog.search);
+            Some(start..start + utf16_len(&self.add_dialog.marked))
+        }
+    }
+
+    pub fn add_dialog_text_range(&self, range: Range<usize>) -> String {
+        let full = self.add_dialog_full_text();
+        let start = byte_index_for_utf16(&full, range.start);
+        let end = byte_index_for_utf16(&full, range.end);
+        full.get(start..end).unwrap_or_default().to_string()
+    }
+
+    /// Replace a UTF-16 range of the editable text, clearing any composition.
+    pub fn add_dialog_replace_range(&mut self, range: Range<usize>, text: &str) {
+        let full = self.add_dialog_full_text();
+        let start = byte_index_for_utf16(&full, range.start);
+        let end = byte_index_for_utf16(&full, range.end);
+        let mut replaced = String::with_capacity(full.len() + text.len());
+        replaced.push_str(&full[..start]);
+        replaced.push_str(text);
+        replaced.push_str(&full[end..]);
+        self.add_dialog.search = replaced;
+        self.add_dialog.marked.clear();
+        self.add_dialog.selected = 0;
+        self.rebuild_add_dialog_filter();
+    }
+
+    /// Commit a chunk of text (typed character or IME result) at the cursor.
+    pub fn add_dialog_commit_text(&mut self, text: &str) {
+        self.add_dialog.search.push_str(text);
+        self.add_dialog.marked.clear();
+        self.add_dialog.selected = 0;
+        self.rebuild_add_dialog_filter();
+    }
+
+    /// Begin or update an IME composition.
+    pub fn add_dialog_set_marked(&mut self, text: &str) {
+        self.add_dialog.marked = text.to_string();
+    }
+
+    /// Commit any pending composition.
+    pub fn add_dialog_unmark(&mut self) {
+        if !self.add_dialog.marked.is_empty() {
+            let marked = std::mem::take(&mut self.add_dialog.marked);
+            self.add_dialog.search.push_str(&marked);
+            self.add_dialog.selected = 0;
+            self.rebuild_add_dialog_filter();
+        }
+    }
+
     pub fn close_add_dialog(&mut self) {
         self.add_dialog = AddDialogState::default();
         if self.operation_state == OperationState::LoadingServices {
             self.operation_state = OperationState::Idle;
         }
-    }
-
-    pub fn add_dialog_input(&mut self, character: char) {
-        self.add_dialog.search.push(character);
-        self.add_dialog.selected = 0;
-        self.rebuild_add_dialog_filter();
     }
 
     pub fn add_dialog_backspace(&mut self) {
@@ -375,9 +434,12 @@ impl AppState {
         self.language
     }
 
-    pub fn cycle_language(&mut self) {
-        self.language = self.language.next();
-        save_settings(&self.settings_file, self.language, self.theme);
+    /// Switch directly to a language, used by the settings segmented control.
+    pub fn set_language(&mut self, language: Language) {
+        if self.language != language {
+            self.language = language;
+            save_settings(&self.settings_file, self.language, self.theme);
+        }
     }
 
     pub fn theme(&self) -> Theme {
@@ -391,13 +453,12 @@ impl AppState {
         }
     }
 
-    pub fn cycle_theme(&mut self) {
-        self.theme = self.theme.next();
-        save_settings(&self.settings_file, self.language, self.theme);
-    }
-
-    pub fn settings_selected(&self) -> usize {
-        self.settings_selected
+    /// Switch directly to a theme, used by the settings segmented control.
+    pub fn set_theme(&mut self, theme: Theme) {
+        if self.theme != theme {
+            self.theme = theme;
+            save_settings(&self.settings_file, self.language, self.theme);
+        }
     }
 
     pub fn tools_selected(&self) -> usize {
@@ -412,12 +473,6 @@ impl AppState {
 
     pub fn scripts_selected(&self) -> usize {
         self.scripts_selected
-    }
-
-    pub fn select_setting(&mut self, index: usize) {
-        if index < SETTINGS_COUNT {
-            self.settings_selected = index;
-        }
     }
 
     pub fn tool_detail_active(&self) -> bool {
@@ -536,6 +591,23 @@ fn map_error(error: &BackendError, language: Language) -> String {
     }
 }
 
+/// Number of UTF-16 code units, which is what the platform input protocol uses.
+fn utf16_len(text: &str) -> usize {
+    text.encode_utf16().count()
+}
+
+/// Convert a UTF-16 offset into a byte offset, clamping to the end of the string.
+fn byte_index_for_utf16(text: &str, target: usize) -> usize {
+    let mut count = 0;
+    for (byte_index, character) in text.char_indices() {
+        if count >= target {
+            return byte_index;
+        }
+        count += character.len_utf16();
+    }
+    text.len()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct AppSettings {
     language: Language,
@@ -622,7 +694,7 @@ mod tests {
                 description: String::new(),
             },
         ]));
-        state.add_dialog_input('b');
+        state.add_dialog_commit_text("b");
         assert_eq!(state.add_dialog_filtered(), &[1]);
     }
 

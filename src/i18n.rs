@@ -15,19 +15,13 @@ impl Language {
             Language::English => "English",
         }
     }
-
-    pub fn next(&self) -> Language {
-        match self {
-            Language::Chinese => Language::English,
-            Language::English => Language::Chinese,
-        }
-    }
 }
 
 #[allow(dead_code)]
 pub struct Translations {
     // 标题栏
     pub app_title: &'static str,
+    pub nav_section: &'static str,
     pub tab_service: &'static str,
     pub tab_tools: &'static str,
     pub tab_scripts: &'static str,
@@ -84,6 +78,8 @@ pub struct Translations {
     pub sysinfo_ram: &'static str,
     pub sysinfo_back: &'static str,
     pub sysinfo_fetching: &'static str,
+    pub sysinfo_group_system: &'static str,
+    pub sysinfo_group_hardware: &'static str,
 
     // 脚本视图
     pub scripts_header: &'static str,
@@ -105,6 +101,8 @@ pub struct Translations {
     pub dialog_empty: &'static str,
     pub dialog_hint_add: &'static str,
     pub dialog_hint_cancel: &'static str,
+    pub dialog_close: &'static str,
+    pub dialog_count: &'static str,
 
     // 错误消息
     pub err_unknown: &'static str,
@@ -119,6 +117,7 @@ pub struct Translations {
 
 pub const ZH: Translations = Translations {
     app_title: "Rust 系统工具",
+    nav_section: "导航",
     tab_service: " 服务管理 ",
     tab_tools: " 系统工具 ",
     tab_scripts: " 执行脚本 ",
@@ -171,6 +170,8 @@ pub const ZH: Translations = Translations {
     sysinfo_ram: "内存 (GB)",
     sysinfo_back: "返回",
     sysinfo_fetching: "正在获取系统信息...",
+    sysinfo_group_system: "系统",
+    sysinfo_group_hardware: "硬件",
 
     scripts_header: "执行脚本",
     script_reset_navicat: "重置Navicat时间",
@@ -189,6 +190,8 @@ pub const ZH: Translations = Translations {
     dialog_empty: "没有匹配的服务",
     dialog_hint_add: "添加",
     dialog_hint_cancel: "取消",
+    dialog_close: "关闭",
+    dialog_count: "共 {} 项",
 
     err_unknown: "未知",
     err_permission: "权限不足",
@@ -202,6 +205,7 @@ pub const ZH: Translations = Translations {
 
 pub const EN: Translations = Translations {
     app_title: "Rust Win Tool",
+    nav_section: "Navigation",
     tab_service: " Services ",
     tab_tools: " Tools ",
     tab_scripts: " Scripts ",
@@ -235,9 +239,9 @@ pub const EN: Translations = Translations {
     col_actions: "Actions",
     status_running: "Running",
     status_stopped: "Stopped",
-    status_starting: "Starting...",
-    status_stopping: "Stopping...",
-    status_refreshing: "Refreshing...",
+    status_starting: "Starting",
+    status_stopping: "Stopping",
+    status_refreshing: "Refreshing",
 
     tools_header: "System Tools",
     tool_sysinfo: "System Info",
@@ -254,6 +258,8 @@ pub const EN: Translations = Translations {
     sysinfo_ram: "RAM (GB)",
     sysinfo_back: "Back",
     sysinfo_fetching: "Fetching system info...",
+    sysinfo_group_system: "System",
+    sysinfo_group_hardware: "Hardware",
 
     scripts_header: "Scripts",
     script_reset_navicat: "Reset Navicat",
@@ -272,6 +278,8 @@ pub const EN: Translations = Translations {
     dialog_empty: "No matching services",
     dialog_hint_add: "Add",
     dialog_hint_cancel: "Cancel",
+    dialog_close: "Close",
+    dialog_count: "{} items",
 
     err_unknown: "Unknown",
     err_permission: "Access denied",
