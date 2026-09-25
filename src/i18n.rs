@@ -41,6 +41,10 @@ pub struct Translations {
     pub hint_refresh: &'static str,
     pub hint_confirm: &'static str,
     pub refresh_done: &'static str,
+    pub filter_all: &'static str,
+    pub svc_no_match: &'static str,
+    pub confirm_delete_title: &'static str,
+    pub confirm_delete_message: &'static str,
 
     // 服务视图
     pub svc_header: &'static str,
@@ -137,6 +141,10 @@ pub const ZH: Translations = Translations {
     hint_refresh: "刷新",
     hint_confirm: "确认",
     refresh_done: "已刷新 {} 个服务",
+    filter_all: "全部",
+    svc_no_match: "没有匹配的服务",
+    confirm_delete_title: "删除服务",
+    confirm_delete_message: "确定要从列表移除「{}」吗？",
 
     svc_header: "服务管理",
     svc_selected: "选中",
@@ -226,6 +234,10 @@ pub const EN: Translations = Translations {
     hint_refresh: "Refresh",
     hint_confirm: "Confirm",
     refresh_done: "Refreshed {} services",
+    filter_all: "All",
+    svc_no_match: "No matching services",
+    confirm_delete_title: "Remove service",
+    confirm_delete_message: "Remove “{}” from the list?",
 
     svc_header: "Service Management",
     svc_selected: "Selected",

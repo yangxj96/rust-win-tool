@@ -8,7 +8,9 @@ use gpui::{
 };
 use std::time::{Duration, Instant};
 
-use crate::app::{AppState, OperationState, PendingAction, ServiceStatus, Theme, View};
+use crate::app::{
+    AppState, OperationState, PendingAction, ServiceFilter, ServiceStatus, Theme, View,
+};
 use crate::backend::{self, ServiceOperation};
 use crate::i18n::Language;
 use crate::theme::{StatusColors, ThemeColors};
@@ -30,9 +32,12 @@ pub struct MainWindow {
     pub(crate) state: Entity<AppState>,
     pub(crate) focus_handle: FocusHandle,
     search_focus: FocusHandle,
+    service_search_focus: FocusHandle,
     service_scroll: ScrollHandle,
     dialog_scroll: ScrollHandle,
     sysinfo_scroll: ScrollHandle,
+    /// Managed service awaiting delete confirmation.
+    pending_delete: Option<String>,
     /// Whether a first refresh has already happened, so the launch refresh does
     /// not show the completion notice.
     refresh_notice_ready: bool,
@@ -59,16 +64,26 @@ impl MainWindow {
             state,
             focus_handle: cx.focus_handle(),
             search_focus: cx.focus_handle(),
+            service_search_focus: cx.focus_handle(),
             service_scroll: ScrollHandle::new(),
             dialog_scroll: ScrollHandle::new(),
             sysinfo_scroll: ScrollHandle::new(),
+            pending_delete: None,
             refresh_notice_ready: false,
         }
     }
 
-    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Text insertion is owned by the platform input handler (WM_CHAR / IME).
+        // Backspace is filtered out of WM_CHAR, so handle it here for whichever
+        // text field currently has focus.
+        if input::text_editing_input(event) != Some(input::TextEditingInput::Backspace) {
+            return;
+        }
         if self.state.read(cx).show_add_dialog() {
-            self.handle_dialog_key(event, cx);
+            self.update_state(cx, |state| state.add_dialog_backspace());
+        } else if self.service_search_focus.is_focused(window) {
+            self.update_state(cx, |state| state.service_search_backspace());
         }
     }
 
@@ -97,14 +112,6 @@ impl MainWindow {
         _cx: &mut Context<Self>,
     ) {
         window.remove_window();
-    }
-
-    fn handle_dialog_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        // Text insertion is owned by the platform input handler (WM_CHAR / IME).
-        // Here we only handle editing keys that are filtered out of WM_CHAR.
-        if input::text_editing_input(event) == Some(input::TextEditingInput::Backspace) {
-            self.update_state(cx, |state| state.add_dialog_backspace());
-        }
     }
 
     fn update_state(&self, cx: &mut Context<Self>, update: impl FnOnce(&mut AppState) + 'static) {
@@ -551,11 +558,23 @@ impl MainWindow {
                     ),
                 }
             };
+        let chip = match state.operation_state() {
+            OperationState::Idle => None,
+            OperationState::Refreshing | OperationState::LoadingServices => {
+                Some((translations.status_refreshing, colors.brand.primary))
+            }
+            OperationState::Starting => Some((translations.status_starting, colors.warning.text)),
+            OperationState::Stopping => Some((translations.status_stopping, colors.warning.text)),
+            OperationState::LoadingSystemInfo => {
+                Some((translations.sysinfo_fetching, colors.brand.primary))
+            }
+            OperationState::RunningScript => Some((translations.svc_pending, colors.warning.text)),
+            OperationState::Error => Some((translations.err_failed, colors.danger.text)),
+        };
         div()
             .flex()
-            .flex_col()
-            .justify_center()
-            .gap_1()
+            .items_center()
+            .justify_between()
             .w_full()
             .h(px(72.))
             .px_6()
@@ -564,17 +583,46 @@ impl MainWindow {
             .border_color(components::color(colors.border.subtle))
             .child(
                 div()
-                    .text_xl()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(components::color(colors.fg.default))
-                    .child(title),
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(components::color(colors.fg.default))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(components::color(colors.fg.muted))
+                            .child(description),
+                    ),
             )
-            .child(
+            .children(chip.map(|(label, accent)| {
                 div()
-                    .text_sm()
-                    .text_color(components::color(colors.fg.muted))
-                    .child(description),
-            )
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .h(px(24.))
+                    .px_2()
+                    .rounded_full()
+                    .bg(components::color(colors.bg.surface))
+                    .border_1()
+                    .border_color(components::color(colors.border.subtle))
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(components::color(accent))
+                    .child(
+                        div()
+                            .w(px(6.))
+                            .h(px(6.))
+                            .rounded_full()
+                            .bg(components::color(accent)),
+                    )
+                    .child(label)
+            }))
     }
 
     /// Custom scrollbar: GPUI 0.2.2 does not paint scrollbars, so the track and
@@ -655,7 +703,7 @@ impl MainWindow {
         cx.notify();
     }
 
-    fn render_service_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
+    fn render_service_page(&self, window: &Window, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
         let refreshing = state.operation_state() == OperationState::Refreshing;
@@ -742,6 +790,105 @@ impl MainWindow {
             )
             .children(progress);
 
+        let search_focused = self.service_search_focus.is_focused(window);
+        let search_input = {
+            let input_entity = cx.entity();
+            let input_focus = self.service_search_focus.clone();
+            canvas(
+                |_, _, _| (),
+                move |bounds, _, window, cx| {
+                    window.handle_input(
+                        &input_focus,
+                        ElementInputHandler::new(bounds, input_entity.clone()),
+                        cx,
+                    );
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
+        let search_field = components::search_field(
+            state.service_search(),
+            state.service_search_marked(),
+            translations.dialog_search,
+            colors,
+            search_focused,
+        )
+        .relative()
+        .track_focus(&self.service_search_focus)
+        .cursor_text()
+        .focus(|style| style.border_color(components::color(colors.brand.primary)))
+        .id("service-search")
+        .on_click(cx.listener(Self::focus_service_search))
+        .child(search_input);
+
+        let filter_row = div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .w_full()
+            .child(div().flex_1().min_w(px(0.)).child(search_field))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        segment(
+                            translations.filter_all,
+                            state.service_filter() == ServiceFilter::All,
+                            colors,
+                            "filter-all",
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.update_state(cx, |state| {
+                                state.set_service_filter(ServiceFilter::All)
+                            })
+                        })),
+                    )
+                    .child(
+                        segment(
+                            translations.status_running,
+                            state.service_filter() == ServiceFilter::Running,
+                            colors,
+                            "filter-running",
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.update_state(cx, |state| {
+                                state.set_service_filter(ServiceFilter::Running)
+                            })
+                        })),
+                    )
+                    .child(
+                        segment(
+                            translations.status_stopped,
+                            state.service_filter() == ServiceFilter::Stopped,
+                            colors,
+                            "filter-stopped",
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.update_state(cx, |state| {
+                                state.set_service_filter(ServiceFilter::Stopped)
+                            })
+                        })),
+                    )
+                    .child(
+                        segment(
+                            translations.svc_pending,
+                            state.service_filter() == ServiceFilter::Pending,
+                            colors,
+                            "filter-pending",
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.update_state(cx, |state| {
+                                state.set_service_filter(ServiceFilter::Pending)
+                            })
+                        })),
+                    ),
+            );
+
         let header = div()
             .flex()
             .items_center()
@@ -774,18 +921,17 @@ impl MainWindow {
                     .child(translations.col_actions),
             );
 
-        let rows = state
-            .managed_services()
-            .iter()
-            .enumerate()
-            .map(|(index, service)| {
-                let status = state.service_status(&service.name);
-                let message = state.service_message(&service.name).unwrap_or("");
-                let service_name = service.name.clone();
-                let start_name = service_name.clone();
-                let stop_name = service_name.clone();
-                let delete_name = service_name;
-                let actions = div()
+        let visible = state.filtered_service_indices();
+        let rows = visible.iter().map(|&index| {
+            let service = &state.managed_services()[index];
+            let status = state.service_status(&service.name);
+            let message = state.service_message(&service.name).unwrap_or("");
+            let service_name = service.name.clone();
+            let start_name = service_name.clone();
+            let stop_name = service_name.clone();
+            let delete_name = service_name;
+            let actions =
+                div()
                     .flex()
                     .items_center()
                     .gap_1()
@@ -829,69 +975,69 @@ impl MainWindow {
                         .text_xs()
                         .id(("service-delete", index))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            let delete_name = delete_name.clone();
-                            this.update_state(cx, move |state| state.remove_service(&delete_name))
+                            this.pending_delete = Some(delete_name.clone());
+                            cx.notify();
                         })),
                     );
-                div()
-                    .flex()
-                    .items_center()
-                    .w_full()
-                    .min_h(px(52.))
-                    .px_3()
-                    .border_b_1()
-                    .border_color(components::color(colors.border.subtle))
-                    .bg(components::color(colors.bg.surface))
-                    .text_sm()
-                    .text_color(components::color(colors.fg.default))
-                    .hover(move |style| style.bg(components::color(colors.bg.surface_hover)))
-                    .id(("service-row", index))
-                    .child(
-                        div()
-                            .w(px(SERVICE_NAME_COLUMN_WIDTH))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(service.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .w(px(SERVICE_DISPLAY_COLUMN_WIDTH))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_color(components::color(colors.fg.muted))
-                            .child(service.display_name.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .w(px(SERVICE_STATUS_COLUMN_WIDTH))
-                            .child(components::badge(
-                                status_label(status, translations),
-                                status_colors(status, colors),
-                            )),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_color(components::color(if message.is_empty() {
-                                colors.fg.subtle
-                            } else {
-                                colors.danger.text
-                            }))
-                            .child(if message.is_empty() {
-                                "—".to_string()
-                            } else {
-                                message.to_string()
-                            }),
-                    )
-                    .child(actions)
-            });
+            div()
+                .flex()
+                .items_center()
+                .w_full()
+                .min_h(px(52.))
+                .px_3()
+                .border_b_1()
+                .border_color(components::color(colors.border.subtle))
+                .bg(components::color(colors.bg.surface))
+                .text_sm()
+                .text_color(components::color(colors.fg.default))
+                .hover(move |style| style.bg(components::color(colors.bg.surface_hover)))
+                .id(("service-row", index))
+                .child(
+                    div()
+                        .w(px(SERVICE_NAME_COLUMN_WIDTH))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(service.name.clone()),
+                )
+                .child(
+                    div()
+                        .w(px(SERVICE_DISPLAY_COLUMN_WIDTH))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_color(components::color(colors.fg.muted))
+                        .child(service.display_name.clone()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .w(px(SERVICE_STATUS_COLUMN_WIDTH))
+                        .child(components::badge(
+                            status_label(status, translations),
+                            status_colors(status, colors),
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_color(components::color(if message.is_empty() {
+                            colors.fg.subtle
+                        } else {
+                            colors.danger.text
+                        }))
+                        .child(if message.is_empty() {
+                            "—".to_string()
+                        } else {
+                            message.to_string()
+                        }),
+                )
+                .child(actions)
+        });
 
         let body = if state.managed_services().is_empty() {
             components::card(colors)
@@ -904,6 +1050,19 @@ impl MainWindow {
                     ICON_SERVICE,
                     translations.svc_header,
                     translations.svc_empty,
+                    colors,
+                ))
+        } else if visible.is_empty() {
+            components::card(colors)
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .id("service-no-match")
+                .child(components::empty_state(
+                    ICON_SERVICE,
+                    translations.svc_no_match,
+                    translations.dialog_search,
                     colors,
                 ))
         } else {
@@ -969,6 +1128,7 @@ impl MainWindow {
             .size_full()
             .p_6()
             .child(toolbar)
+            .child(filter_row)
             .child(body)
             .children(notice)
     }
@@ -1145,17 +1305,32 @@ impl MainWindow {
             .size_full()
             .p_6()
             .child(
-                div().flex().justify_end().child(
-                    components::button(
-                        translations.sysinfo_back,
-                        colors,
-                        components::ButtonVariant::Secondary,
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        components::button(
+                            translations.hint_refresh,
+                            colors,
+                            components::ButtonVariant::Secondary,
+                        )
+                        .id("sysinfo-refresh")
+                        .on_click(cx.listener(Self::refresh_system_info_clicked)),
                     )
-                    .id("sysinfo-back")
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.update_state(cx, |state| state.close_tool_detail());
-                    })),
-                ),
+                    .child(
+                        components::button(
+                            translations.sysinfo_back,
+                            colors,
+                            components::ButtonVariant::Secondary,
+                        )
+                        .id("sysinfo-back")
+                        .on_click(cx.listener(
+                            |this, _event, _window, cx| {
+                                this.update_state(cx, |state| state.close_tool_detail());
+                            },
+                        )),
+                    ),
             )
             .child(content)
     }
@@ -1559,12 +1734,67 @@ impl MainWindow {
         self.refresh_services(cx);
     }
 
+    fn refresh_system_info_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_state(cx, |state| state.request_system_info_refresh());
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_spawn(async { backend::fetch_system_info() })
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    state.set_system_info(result);
+                    cx.notify();
+                })
+                .ok();
+            Timer::after(Duration::from_millis(100)).await;
+            state.update(cx, |_state, cx| cx.notify()).ok();
+        })
+        .detach();
+    }
+
     fn script_clicked(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         self.run_script(cx);
     }
 
     fn focus_search(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.search_focus);
+        cx.notify();
+    }
+
+    fn focus_service_search(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.service_search_focus);
+        cx.notify();
+    }
+
+    fn confirm_delete_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(name) = self.pending_delete.take() {
+            self.update_state(cx, move |state| state.remove_service(&name));
+        }
+    }
+
+    fn cancel_delete_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_delete = None;
         cx.notify();
     }
 
@@ -1598,13 +1828,80 @@ impl MainWindow {
             });
         }
     }
+
+    fn render_confirm_delete(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let colors = state.theme_colors();
+        let message = translations
+            .confirm_delete_message
+            .replace("{}", self.pending_delete.as_deref().unwrap_or_default());
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000099))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .w(px(380.))
+                    .p_5()
+                    .rounded_xl()
+                    .shadow_2xl()
+                    .bg(components::color(colors.bg.elevated))
+                    .border_1()
+                    .border_color(components::color(colors.border.default))
+                    .text_color(components::color(colors.fg.default))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(translations.confirm_delete_title),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(components::color(colors.fg.muted))
+                            .child(message),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                components::button(
+                                    translations.dialog_hint_cancel,
+                                    colors,
+                                    components::ButtonVariant::Secondary,
+                                )
+                                .id("confirm-delete-cancel")
+                                .on_click(cx.listener(Self::cancel_delete_clicked)),
+                            )
+                            .child(
+                                components::button(
+                                    translations.hint_delete,
+                                    colors,
+                                    components::ButtonVariant::Danger,
+                                )
+                                .id("confirm-delete-ok")
+                                .on_click(cx.listener(Self::confirm_delete_clicked)),
+                            ),
+                    ),
+            )
+    }
 }
 
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
         let page = match state.current_view() {
-            View::Service => self.render_service_page(state, cx),
+            View::Service => self.render_service_page(window, state, cx),
             View::Tools => self.render_tools_page(state, cx),
             View::Scripts => self.render_scripts_page(state, cx),
             View::Settings => self.render_settings_page(state, cx),
@@ -1627,6 +1924,9 @@ impl Render for MainWindow {
         if state.show_add_dialog() {
             content = content.child(self.render_add_dialog(window, state, cx));
         }
+        if self.pending_delete.is_some() {
+            content = content.child(self.render_confirm_delete(state, cx));
+        }
         div()
             .size_full()
             .flex()
@@ -1643,13 +1943,16 @@ impl EntityInputHandler for MainWindow {
         &mut self,
         range_utf16: Range<usize>,
         adjusted_range: &mut Option<Range<usize>>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        let text = self
-            .state
-            .read(cx)
-            .add_dialog_text_range(range_utf16.clone());
+        let service = self.service_search_focus.is_focused(window);
+        let state = self.state.read(cx);
+        let text = if service {
+            state.service_search_text_range(range_utf16.clone())
+        } else {
+            state.add_dialog_text_range(range_utf16.clone())
+        };
         *adjusted_range = Some(range_utf16);
         Some(text)
     }
@@ -1657,10 +1960,15 @@ impl EntityInputHandler for MainWindow {
     fn selected_text_range(
         &mut self,
         _ignore_disabled_input: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let cursor = self.state.read(cx).add_dialog_text_utf16_len();
+        let state = self.state.read(cx);
+        let cursor = if self.service_search_focus.is_focused(window) {
+            state.service_search_text_utf16_len()
+        } else {
+            state.add_dialog_text_utf16_len()
+        };
         Some(UTF16Selection {
             range: cursor..cursor,
             reversed: false,
@@ -1669,27 +1977,49 @@ impl EntityInputHandler for MainWindow {
 
     fn marked_text_range(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
-        self.state.read(cx).add_dialog_marked_range()
+        let state = self.state.read(cx);
+        if self.service_search_focus.is_focused(window) {
+            state.service_search_marked_range()
+        } else {
+            state.add_dialog_marked_range()
+        }
     }
 
-    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.update_state(cx, |state| state.add_dialog_unmark());
+    fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let service = self.service_search_focus.is_focused(window);
+        self.update_state(cx, move |state| {
+            if service {
+                state.service_search_unmark();
+            } else {
+                state.add_dialog_unmark();
+            }
+        });
     }
 
     fn replace_text_in_range(
         &mut self,
         replacement_range: Option<Range<usize>>,
         text: &str,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let text = text.to_string();
-        self.update_state(cx, move |state| match replacement_range {
-            Some(range) => state.add_dialog_replace_range(range, &text),
-            None => state.add_dialog_commit_text(&text),
+        let service = self.service_search_focus.is_focused(window);
+        self.update_state(cx, move |state| {
+            if service {
+                match replacement_range {
+                    Some(range) => state.service_search_replace_range(range, &text),
+                    None => state.service_search_commit_text(&text),
+                }
+            } else {
+                match replacement_range {
+                    Some(range) => state.add_dialog_replace_range(range, &text),
+                    None => state.add_dialog_commit_text(&text),
+                }
+            }
         });
     }
 
@@ -1698,15 +2028,23 @@ impl EntityInputHandler for MainWindow {
         range_utf16: Option<Range<usize>>,
         new_text: &str,
         _new_selected_range: Option<Range<usize>>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let text = new_text.to_string();
+        let service = self.service_search_focus.is_focused(window);
         self.update_state(cx, move |state| {
-            if let Some(range) = range_utf16 {
-                state.add_dialog_replace_range(range, "");
+            if service {
+                if let Some(range) = range_utf16 {
+                    state.service_search_replace_range(range, "");
+                }
+                state.service_search_set_marked(&text);
+            } else {
+                if let Some(range) = range_utf16 {
+                    state.add_dialog_replace_range(range, "");
+                }
+                state.add_dialog_set_marked(&text);
             }
-            state.add_dialog_set_marked(&text);
         });
     }
 
