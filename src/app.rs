@@ -741,6 +741,15 @@ impl AppState {
         app_service::save_managed_services(&self.data_file, &self.managed_services);
     }
 
+    /// Replace the whole managed list (used by import) and persist it.
+    pub fn replace_managed_services(&mut self, services: Vec<ManagedService>) {
+        self.managed_services = services;
+        self.service_statuses.clear();
+        self.service_known_statuses.clear();
+        self.service_messages.clear();
+        app_service::save_managed_services(&self.data_file, &self.managed_services);
+    }
+
     pub fn begin_add_dialog(&mut self) {
         self.add_dialog = AddDialogState {
             show: true,

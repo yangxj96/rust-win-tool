@@ -824,6 +824,24 @@ impl MainWindow {
                         )
                         .id("service-history")
                         .on_click(cx.listener(Self::toggle_history_clicked)),
+                    )
+                    .child(
+                        components::button(
+                            translations.hint_export,
+                            colors,
+                            components::ButtonVariant::Ghost,
+                        )
+                        .id("service-export")
+                        .on_click(cx.listener(Self::export_services_clicked)),
+                    )
+                    .child(
+                        components::button(
+                            translations.hint_import,
+                            colors,
+                            components::ButtonVariant::Ghost,
+                        )
+                        .id("service-import")
+                        .on_click(cx.listener(Self::import_services_clicked)),
                     ),
             )
             .child(
@@ -2086,6 +2104,111 @@ impl MainWindow {
 
     fn clear_history_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.update_state(cx, |state| state.clear_history());
+    }
+
+    fn export_services_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let services = self.state.read(cx).managed_services().to_vec();
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let path = cx
+                .background_spawn(async { crate::file_dialog::save_file("managed_services.json") })
+                .await;
+            let Some(path) = path else {
+                return;
+            };
+            let target = path.clone();
+            let result = cx
+                .background_spawn(
+                    async move { backend::export_managed_services(&target, &services) },
+                )
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    let message = match result {
+                        Ok(()) => state
+                            .t()
+                            .export_done
+                            .replace("{}", &path.display().to_string()),
+                        Err(error) => error.to_string(),
+                    };
+                    state.set_refresh_notice(message);
+                    cx.notify();
+                })
+                .ok();
+            Timer::after(Duration::from_millis(2500)).await;
+            state
+                .update(cx, |state, cx| {
+                    state.clear_refresh_notice();
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn import_services_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let path = cx
+                .background_spawn(async { crate::file_dialog::open_file() })
+                .await;
+            let Some(path) = path else {
+                return;
+            };
+            let result = cx
+                .background_spawn(async move { backend::import_managed_services(&path) })
+                .await;
+            let services = match result {
+                Ok(services) => services,
+                Err(error) => {
+                    state
+                        .update(cx, |state, cx| {
+                            state.set_refresh_notice(error.to_string());
+                            cx.notify();
+                        })
+                        .ok();
+                    return;
+                }
+            };
+
+            let names: Vec<String> = services
+                .iter()
+                .map(|service| service.name.clone())
+                .collect();
+            let count = services.len();
+            state
+                .update(cx, |state, cx| {
+                    state.replace_managed_services(services);
+                    cx.notify();
+                })
+                .ok();
+            let results = cx
+                .background_spawn(async move {
+                    backend::execute_service_operation(ServiceOperation::RefreshAll(names))
+                })
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    for result in results {
+                        match result.status {
+                            Ok(status) => state.apply_service_success(&result.name, &status),
+                            Err(error) => state.apply_service_error(&result.name, &error),
+                        }
+                    }
+                    let message = state.t().import_done.replace("{}", &count.to_string());
+                    state.set_refresh_notice(message);
+                    cx.notify();
+                })
+                .ok();
+            Timer::after(Duration::from_millis(2500)).await;
+            state
+                .update(cx, |state, cx| {
+                    state.clear_refresh_notice();
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
     }
 
     fn set_start_type(&mut self, name: String, start_type: StartType, cx: &mut Context<Self>) {

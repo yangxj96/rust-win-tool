@@ -7,6 +7,7 @@ use gpui::{
 mod app;
 mod backend;
 mod cleanup;
+mod file_dialog;
 mod i18n;
 mod theme;
 mod ui;

@@ -1,5 +1,6 @@
-use app_service::{ServiceError, ServiceInfo};
+use app_service::{ManagedService, ServiceError, ServiceInfo};
 use serde_json::Value;
+use std::path::Path;
 use std::process::Command;
 
 #[cfg(windows)]
@@ -60,6 +61,21 @@ pub fn set_service_start_type(
     start_type: app_service::StartType,
 ) -> Result<(), BackendError> {
     app_service::set_service_start_type(name, start_type).map_err(service_error)
+}
+
+pub fn export_managed_services(
+    path: &Path,
+    services: &[ManagedService],
+) -> Result<(), BackendError> {
+    let json = serde_json::to_string_pretty(services)
+        .map_err(|error| BackendError::Parse(error.to_string()))?;
+    std::fs::write(path, json).map_err(|error| BackendError::Command(error.to_string()))
+}
+
+pub fn import_managed_services(path: &Path) -> Result<Vec<ManagedService>, BackendError> {
+    let text =
+        std::fs::read_to_string(path).map_err(|error| BackendError::Command(error.to_string()))?;
+    serde_json::from_str(&text).map_err(|error| BackendError::Parse(error.to_string()))
 }
 
 #[derive(Debug, Clone)]

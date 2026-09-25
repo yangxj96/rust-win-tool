@@ -99,6 +99,10 @@ pub struct Translations {
     pub action_stop_all: &'static str,
     pub action_refresh: &'static str,
     pub action_start_type: &'static str,
+    pub hint_export: &'static str,
+    pub hint_import: &'static str,
+    pub export_done: &'static str,
+    pub import_done: &'static str,
 
     // 服务视图
     pub svc_header: &'static str,
@@ -250,6 +254,10 @@ pub const ZH: Translations = Translations {
     action_stop_all: "停止全部",
     action_refresh: "刷新",
     action_start_type: "启动类型",
+    hint_export: "导出",
+    hint_import: "导入",
+    export_done: "已导出到 {}",
+    import_done: "已导入 {} 个服务",
 
     svc_header: "服务管理",
     svc_selected: "选中",
@@ -394,6 +402,10 @@ pub const EN: Translations = Translations {
     action_stop_all: "Stop all",
     action_refresh: "Refresh",
     action_start_type: "Start type",
+    hint_export: "Export",
+    hint_import: "Import",
+    export_done: "Exported to {}",
+    import_done: "Imported {} services",
 
     svc_header: "Service Management",
     svc_selected: "Selected",
