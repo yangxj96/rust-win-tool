@@ -12,6 +12,7 @@ use crate::app::{
     AppState, OperationState, PendingAction, ServiceFilter, ServiceStatus, Theme, View,
 };
 use crate::backend::{self, ServiceOperation};
+use crate::cleanup::{self, CleanupCategory, DeleteMode};
 use crate::i18n::Language;
 use crate::theme::{StatusColors, ThemeColors};
 use crate::ui::{components, input};
@@ -25,6 +26,7 @@ const SERVICE_ACTIONS_COLUMN_WIDTH: f32 = 168.;
 
 const ICON_SERVICE: &str = "▤";
 const ICON_TOOLS: &str = "▦";
+const ICON_CLEANUP: &str = "▧";
 const ICON_SCRIPTS: &str = "⟳";
 const ICON_SETTINGS: &str = "⚙︎";
 
@@ -38,6 +40,9 @@ pub struct MainWindow {
     sysinfo_scroll: ScrollHandle,
     /// Managed service awaiting delete confirmation.
     pending_delete: Option<String>,
+    /// Cleanup confirmation dialogs.
+    pending_clean: bool,
+    pending_empty_bin: bool,
     /// Whether a first refresh has already happened, so the launch refresh does
     /// not show the completion notice.
     refresh_notice_ready: bool,
@@ -51,6 +56,18 @@ struct ScrollbarDrag {
 
 /// Invisible preview view for the scrollbar drag interaction.
 struct ScrollbarDragPreview;
+
+/// Parameters for the shared confirmation dialog.
+struct ConfirmDialog {
+    title: &'static str,
+    message: String,
+    ok_label: &'static str,
+    ok_id: &'static str,
+    cancel_id: &'static str,
+    danger: bool,
+    on_ok: fn(&mut MainWindow, &ClickEvent, &mut Window, &mut Context<MainWindow>),
+    on_cancel: fn(&mut MainWindow, &ClickEvent, &mut Window, &mut Context<MainWindow>),
+}
 
 impl Render for ScrollbarDragPreview {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -69,6 +86,8 @@ impl MainWindow {
             dialog_scroll: ScrollHandle::new(),
             sysinfo_scroll: ScrollHandle::new(),
             pending_delete: None,
+            pending_clean: false,
+            pending_empty_bin: false,
             refresh_notice_ready: false,
         }
     }
@@ -501,9 +520,10 @@ impl MainWindow {
     fn render_sidebar(&self, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
-        let navigation: [(View, &str, &str); 4] = [
+        let navigation: [(View, &str, &str); 5] = [
             (View::Service, ICON_SERVICE, translations.tab_service),
             (View::Tools, ICON_TOOLS, translations.tab_tools),
+            (View::Cleanup, ICON_CLEANUP, translations.tab_cleanup),
             (View::Scripts, ICON_SCRIPTS, translations.tab_scripts),
             (View::Settings, ICON_SETTINGS, translations.tab_settings),
         ];
@@ -530,6 +550,7 @@ impl MainWindow {
                 let id = match view {
                     View::Service => "sidebar-service",
                     View::Tools => "sidebar-tools",
+                    View::Cleanup => "sidebar-cleanup",
                     View::Scripts => "sidebar-scripts",
                     View::Settings => "sidebar-settings",
                 };
@@ -551,6 +572,10 @@ impl MainWindow {
                 match state.current_view() {
                     View::Service => (translations.svc_header, translations.page_service_desc),
                     View::Tools => (translations.tools_header, translations.page_tools_desc),
+                    View::Cleanup => (
+                        translations.tab_cleanup.trim(),
+                        translations.page_cleanup_desc,
+                    ),
                     View::Scripts => (translations.scripts_header, translations.page_scripts_desc),
                     View::Settings => (
                         translations.settings_header,
@@ -569,6 +594,9 @@ impl MainWindow {
                 Some((translations.sysinfo_fetching, colors.brand.primary))
             }
             OperationState::RunningScript => Some((translations.svc_pending, colors.warning.text)),
+            OperationState::ScanningCleanup | OperationState::CleaningCleanup => {
+                Some((translations.svc_pending, colors.warning.text))
+            }
             OperationState::Error => Some((translations.err_failed, colors.danger.text)),
         };
         div()
@@ -1335,6 +1363,188 @@ impl MainWindow {
             .child(content)
     }
 
+    fn render_cleanup_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let colors = state.theme_colors();
+        let cleanup = state.cleanup();
+
+        let toolbar = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .w_full()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        components::button(
+                            translations.cleanup_scan,
+                            colors,
+                            components::ButtonVariant::Secondary,
+                        )
+                        .id("cleanup-scan")
+                        .debug_selector(|| "cleanup-scan".to_string())
+                        .on_click(cx.listener(Self::cleanup_scan_clicked)),
+                    )
+                    .child(
+                        components::button(
+                            translations.cleanup_clean,
+                            colors,
+                            components::ButtonVariant::Primary,
+                        )
+                        .id("cleanup-clean")
+                        .on_click(cx.listener(Self::cleanup_clean_clicked)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        segment(
+                            translations.cleanup_mode_recycle,
+                            cleanup.delete_mode == DeleteMode::Recycle,
+                            colors,
+                            "cleanup-mode-recycle",
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.update_state(cx, |state| {
+                                state.set_cleanup_delete_mode(DeleteMode::Recycle)
+                            })
+                        })),
+                    )
+                    .child(
+                        segment(
+                            translations.cleanup_mode_permanent,
+                            cleanup.delete_mode == DeleteMode::Permanent,
+                            colors,
+                            "cleanup-mode-permanent",
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.update_state(cx, |state| {
+                                state.set_cleanup_delete_mode(DeleteMode::Permanent)
+                            })
+                        })),
+                    ),
+            );
+
+        let rows = cleanup.rows.iter().enumerate().map(|(index, row)| {
+            let selected = row.selected;
+            let checkbox = div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(16.))
+                .h(px(16.))
+                .rounded_sm()
+                .border_1()
+                .border_color(components::color(if selected {
+                    colors.brand.fill
+                } else {
+                    colors.border.strong
+                }))
+                .bg(components::color(if selected {
+                    colors.brand.fill
+                } else {
+                    colors.bg.canvas
+                }))
+                .text_xs()
+                .text_color(components::color(colors.fg.on_accent))
+                .child(if selected { "✓" } else { "" });
+            let size = match row.scan {
+                Some(scan) => format!(
+                    "{}  ·  {}",
+                    cleanup::format_bytes(scan.bytes),
+                    translations
+                        .dialog_count
+                        .replace("{}", &scan.files.to_string())
+                ),
+                None => translations.cleanup_not_scanned.to_string(),
+            };
+            components::card(colors)
+                .flex()
+                .items_center()
+                .gap_3()
+                .p_3()
+                .cursor_pointer()
+                .id(("cleanup-row", index))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.update_state(cx, move |state| state.toggle_cleanup_row(index))
+                }))
+                .child(checkbox)
+                .child(
+                    div()
+                        .flex_1()
+                        .child(cleanup_category_label(row.category, translations)),
+                )
+                .children(
+                    row.category
+                        .requires_admin()
+                        .then(|| components::badge(translations.cleanup_admin, &colors.info)),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(components::color(colors.fg.muted))
+                        .child(size),
+                )
+        });
+
+        let recycle_row = components::card(colors)
+            .flex()
+            .items_center()
+            .gap_3()
+            .p_3()
+            .child(div().flex_1().child(translations.cleanup_recycle_bin))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(components::color(colors.fg.muted))
+                    .child(match cleanup.recycle_bin {
+                        Some((bytes, _items)) => cleanup::format_bytes(bytes),
+                        None => translations.cleanup_not_scanned.to_string(),
+                    }),
+            )
+            .child(
+                components::button(
+                    translations.cleanup_empty_bin,
+                    colors,
+                    components::ButtonVariant::Secondary,
+                )
+                .id("cleanup-empty-bin")
+                .on_click(cx.listener(Self::cleanup_empty_bin_clicked)),
+            );
+
+        let message = cleanup
+            .message
+            .clone()
+            .map(|text| components::alert(text, &colors.info));
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .size_full()
+            .p_6()
+            .child(toolbar)
+            .children(message)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .w_full()
+                    .flex_1()
+                    .id("cleanup-list")
+                    .overflow_y_scroll()
+                    .children(rows)
+                    .child(recycle_row),
+            )
+    }
+
     fn render_scripts_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
@@ -1798,6 +2008,154 @@ impl MainWindow {
         cx.notify();
     }
 
+    fn cleanup_scan_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_state(cx, |state| state.begin_cleanup_scan());
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let scans = cx
+                .background_spawn(async {
+                    CleanupCategory::all()
+                        .iter()
+                        .map(|&category| (category, cleanup::scan(category)))
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            let recycle_bin = cx
+                .background_spawn(async { cleanup::recycle_bin_usage() })
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    state.apply_cleanup_scan(scans, recycle_bin);
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn cleanup_clean_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_clean = true;
+        cx.notify();
+    }
+
+    fn confirm_clean_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.pending_clean {
+            return;
+        }
+        self.pending_clean = false;
+        let categories = self.state.read(cx).selected_cleanup_categories();
+        let mode = self.state.read(cx).cleanup().delete_mode;
+        self.update_state(cx, |state| state.begin_cleanup());
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let rescan = categories.clone();
+            let report = cx
+                .background_spawn(async move { cleanup::clean(&categories, mode) })
+                .await;
+            let scans = cx
+                .background_spawn(async move {
+                    rescan
+                        .iter()
+                        .map(|&category| (category, cleanup::scan(category)))
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            let recycle_bin = cx
+                .background_spawn(async { cleanup::recycle_bin_usage() })
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    let message = state
+                        .t()
+                        .cleanup_done
+                        .replace("{}", &cleanup::format_bytes(report.freed_bytes))
+                        .replace("{}", &report.skipped_files.to_string());
+                    state.apply_cleanup_result(scans, recycle_bin, message);
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn cancel_clean_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_clean = false;
+        cx.notify();
+    }
+
+    fn cleanup_empty_bin_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_empty_bin = true;
+        cx.notify();
+    }
+
+    fn confirm_empty_bin_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.pending_empty_bin {
+            return;
+        }
+        self.pending_empty_bin = false;
+        self.update_state(cx, |state| state.begin_cleanup());
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let emptied = cx
+                .background_spawn(async { cleanup::empty_recycle_bin() })
+                .await;
+            let recycle_bin = cx
+                .background_spawn(async { cleanup::recycle_bin_usage() })
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    state.apply_cleanup_scan(Vec::new(), recycle_bin);
+                    if emptied {
+                        let message = state.t().cleanup_bin_done.to_string();
+                        state.set_cleanup_message(message);
+                    }
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn cancel_empty_bin_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_empty_bin = false;
+        cx.notify();
+    }
+
     fn cancel_dialog_clicked(
         &mut self,
         _: &ClickEvent,
@@ -1829,12 +2187,19 @@ impl MainWindow {
         }
     }
 
-    fn render_confirm_delete(&self, state: &AppState, cx: &Context<Self>) -> Div {
+    fn render_confirm_dialog(
+        &self,
+        state: &AppState,
+        cx: &Context<Self>,
+        dialog: ConfirmDialog,
+    ) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
-        let message = translations
-            .confirm_delete_message
-            .replace("{}", self.pending_delete.as_deref().unwrap_or_default());
+        let ok_variant = if dialog.danger {
+            components::ButtonVariant::Danger
+        } else {
+            components::ButtonVariant::Primary
+        };
         div()
             .absolute()
             .top_0()
@@ -1849,7 +2214,7 @@ impl MainWindow {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .w(px(380.))
+                    .w(px(420.))
                     .p_5()
                     .rounded_xl()
                     .shadow_2xl()
@@ -1861,13 +2226,13 @@ impl MainWindow {
                         div()
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(translations.confirm_delete_title),
+                            .child(dialog.title),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(components::color(colors.fg.muted))
-                            .child(message),
+                            .child(dialog.message),
                     )
                     .child(
                         div()
@@ -1880,20 +2245,87 @@ impl MainWindow {
                                     colors,
                                     components::ButtonVariant::Secondary,
                                 )
-                                .id("confirm-delete-cancel")
-                                .on_click(cx.listener(Self::cancel_delete_clicked)),
+                                .id(dialog.cancel_id)
+                                .on_click(cx.listener(dialog.on_cancel)),
                             )
                             .child(
-                                components::button(
-                                    translations.hint_delete,
-                                    colors,
-                                    components::ButtonVariant::Danger,
-                                )
-                                .id("confirm-delete-ok")
-                                .on_click(cx.listener(Self::confirm_delete_clicked)),
+                                components::button(dialog.ok_label, colors, ok_variant)
+                                    .id(dialog.ok_id)
+                                    .on_click(cx.listener(dialog.on_ok)),
                             ),
                     ),
             )
+    }
+
+    fn render_confirm_delete(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let name = self.pending_delete.clone().unwrap_or_default();
+        let message = translations.confirm_delete_message.replace("{}", &name);
+        self.render_confirm_dialog(
+            state,
+            cx,
+            ConfirmDialog {
+                title: translations.confirm_delete_title,
+                message,
+                ok_label: translations.hint_delete,
+                ok_id: "confirm-delete-ok",
+                cancel_id: "confirm-delete-cancel",
+                danger: true,
+                on_ok: Self::confirm_delete_clicked,
+                on_cancel: Self::cancel_delete_clicked,
+            },
+        )
+    }
+
+    fn render_confirm_clean(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let totals = state.selected_cleanup_totals();
+        let mode = match state.cleanup().delete_mode {
+            DeleteMode::Recycle => translations.cleanup_mode_recycle,
+            DeleteMode::Permanent => translations.cleanup_mode_permanent,
+        };
+        let message = translations
+            .cleanup_confirm_message
+            .replace("{}", &cleanup::format_bytes(totals.bytes))
+            .replace("{}", &totals.files.to_string())
+            .replace("{}", mode);
+        self.render_confirm_dialog(
+            state,
+            cx,
+            ConfirmDialog {
+                title: translations.cleanup_confirm_title,
+                message,
+                ok_label: translations.cleanup_clean,
+                ok_id: "confirm-clean-ok",
+                cancel_id: "confirm-clean-cancel",
+                danger: false,
+                on_ok: Self::confirm_clean_clicked,
+                on_cancel: Self::cancel_clean_clicked,
+            },
+        )
+    }
+
+    fn render_confirm_empty_bin(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let (bytes, items) = state.cleanup().recycle_bin.unwrap_or((0, 0));
+        let message = translations
+            .cleanup_bin_confirm_message
+            .replace("{}", &items.to_string())
+            .replace("{}", &cleanup::format_bytes(bytes));
+        self.render_confirm_dialog(
+            state,
+            cx,
+            ConfirmDialog {
+                title: translations.cleanup_bin_confirm_title,
+                message,
+                ok_label: translations.cleanup_empty_bin,
+                ok_id: "confirm-empty-bin-ok",
+                cancel_id: "confirm-empty-bin-cancel",
+                danger: true,
+                on_ok: Self::confirm_empty_bin_clicked,
+                on_cancel: Self::cancel_empty_bin_clicked,
+            },
+        )
     }
 }
 
@@ -1903,6 +2335,7 @@ impl Render for MainWindow {
         let page = match state.current_view() {
             View::Service => self.render_service_page(window, state, cx),
             View::Tools => self.render_tools_page(state, cx),
+            View::Cleanup => self.render_cleanup_page(state, cx),
             View::Scripts => self.render_scripts_page(state, cx),
             View::Settings => self.render_settings_page(state, cx),
         };
@@ -1926,6 +2359,12 @@ impl Render for MainWindow {
         }
         if self.pending_delete.is_some() {
             content = content.child(self.render_confirm_delete(state, cx));
+        }
+        if self.pending_clean {
+            content = content.child(self.render_confirm_clean(state, cx));
+        }
+        if self.pending_empty_bin {
+            content = content.child(self.render_confirm_empty_bin(state, cx));
         }
         div()
             .size_full()
@@ -2180,6 +2619,18 @@ fn status_colors(status: ServiceStatus, colors: &ThemeColors) -> &StatusColors {
     }
 }
 
+fn cleanup_category_label(
+    category: CleanupCategory,
+    translations: &crate::i18n::Translations,
+) -> &'static str {
+    match category {
+        CleanupCategory::UserTemp => translations.cleanup_cat_user_temp,
+        CleanupCategory::WindowsTemp => translations.cleanup_cat_windows_temp,
+        CleanupCategory::ThumbnailCache => translations.cleanup_cat_thumbnails,
+        CleanupCategory::WindowsUpdate => translations.cleanup_cat_windows_update,
+    }
+}
+
 fn tool_text(translations: &crate::i18n::Translations, key: &str) -> &'static str {
     match key {
         "tool_sysinfo" => translations.tool_sysinfo,
@@ -2191,7 +2642,7 @@ fn tool_text(translations: &crate::i18n::Translations, key: &str) -> &'static st
 #[cfg(test)]
 mod tests {
     use super::{MainWindow, SERVICE_STATUS_COLUMN_WIDTH, TOOLS};
-    use crate::app::AppState;
+    use crate::app::{AppState, View};
     use gpui::{point, px, size, AppContext, Modifiers, MouseButton, TestAppContext};
 
     #[gpui::test]
@@ -2219,6 +2670,20 @@ mod tests {
             view.clone()
         });
         assert!(visual_cx.debug_bounds("service-add").is_some());
+    }
+
+    #[gpui::test]
+    fn cleanup_page_renders(cx: &mut TestAppContext) {
+        let state = cx.new(|_| {
+            let mut state = AppState::new();
+            state.set_view(View::Cleanup);
+            state
+        });
+        let (view, visual_cx) = cx.add_window_view(|_, cx| MainWindow::new(state.clone(), cx));
+        let _ = visual_cx.draw(point(px(0.), px(0.)), size(px(1100.), px(720.)), |_, _| {
+            view.clone()
+        });
+        assert!(visual_cx.debug_bounds("cleanup-scan").is_some());
     }
 
     #[gpui::test]

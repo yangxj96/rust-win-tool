@@ -5,6 +5,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use crate::backend::BackendError;
+use crate::cleanup::{CleanupCategory, DeleteMode, Scan};
 use crate::i18n::{Language, Translations, EN, ZH};
 use crate::theme::{ThemeColors, DARK, LIGHT};
 
@@ -24,6 +25,7 @@ pub enum Theme {
 pub enum View {
     Service,
     Tools,
+    Cleanup,
     Scripts,
     Settings,
 }
@@ -60,6 +62,8 @@ pub enum OperationState {
     Stopping,
     LoadingSystemInfo,
     RunningScript,
+    ScanningCleanup,
+    CleaningCleanup,
     Error,
 }
 
@@ -175,6 +179,44 @@ impl ServiceFilter {
     }
 }
 
+/// One cleanable location with its selection and last scan result.
+#[derive(Debug, Clone, Copy)]
+pub struct CleanupRow {
+    pub category: CleanupCategory,
+    pub selected: bool,
+    pub scan: Option<Scan>,
+}
+
+/// Junk cleanup page state.
+pub struct CleanupState {
+    pub scanning: bool,
+    pub cleaning: bool,
+    pub rows: Vec<CleanupRow>,
+    pub recycle_bin: Option<(u64, u64)>,
+    pub delete_mode: DeleteMode,
+    pub message: Option<String>,
+}
+
+impl Default for CleanupState {
+    fn default() -> Self {
+        Self {
+            scanning: false,
+            cleaning: false,
+            rows: CleanupCategory::all()
+                .iter()
+                .map(|&category| CleanupRow {
+                    category,
+                    selected: !category.requires_admin(),
+                    scan: None,
+                })
+                .collect(),
+            recycle_bin: None,
+            delete_mode: DeleteMode::Recycle,
+            message: None,
+        }
+    }
+}
+
 pub struct AppState {
     current_view: View,
     managed_services: Vec<ManagedService>,
@@ -198,6 +240,7 @@ pub struct AppState {
     /// Free-text filter and status filter for the main service list.
     service_search: SearchText,
     service_filter: ServiceFilter,
+    cleanup: CleanupState,
     /// Transient message shown after a refresh completes.
     refresh_notice: Option<String>,
 }
@@ -235,6 +278,7 @@ impl AppState {
             add_dialog: AddDialogState::default(),
             service_search: SearchText::default(),
             service_filter: ServiceFilter::All,
+            cleanup: CleanupState::default(),
             refresh_notice: None,
         }
     }
@@ -331,6 +375,104 @@ impl AppState {
             })
             .map(|(index, _)| index)
             .collect()
+    }
+
+    pub fn cleanup(&self) -> &CleanupState {
+        &self.cleanup
+    }
+
+    pub fn toggle_cleanup_row(&mut self, index: usize) {
+        if let Some(row) = self.cleanup.rows.get_mut(index) {
+            row.selected = !row.selected;
+        }
+    }
+
+    pub fn set_cleanup_delete_mode(&mut self, mode: DeleteMode) {
+        self.cleanup.delete_mode = mode;
+    }
+
+    pub fn begin_cleanup_scan(&mut self) {
+        self.cleanup.scanning = true;
+        self.cleanup.message = None;
+        self.operation_state = OperationState::ScanningCleanup;
+    }
+
+    pub fn apply_cleanup_scan(
+        &mut self,
+        scans: Vec<(CleanupCategory, Scan)>,
+        recycle_bin: Option<(u64, u64)>,
+    ) {
+        for (category, scan) in scans {
+            if let Some(row) = self
+                .cleanup
+                .rows
+                .iter_mut()
+                .find(|row| row.category == category)
+            {
+                row.scan = Some(scan);
+            }
+        }
+        self.cleanup.recycle_bin = recycle_bin;
+        self.cleanup.scanning = false;
+        self.cleanup.cleaning = false;
+        self.operation_state = OperationState::Idle;
+    }
+
+    pub fn begin_cleanup(&mut self) {
+        self.cleanup.cleaning = true;
+        self.cleanup.message = None;
+        self.operation_state = OperationState::CleaningCleanup;
+    }
+
+    pub fn set_cleanup_message(&mut self, message: String) {
+        self.cleanup.message = Some(message);
+    }
+
+    pub fn apply_cleanup_result(
+        &mut self,
+        scans: Vec<(CleanupCategory, Scan)>,
+        recycle_bin: Option<(u64, u64)>,
+        message: String,
+    ) {
+        for (category, scan) in scans {
+            if let Some(row) = self
+                .cleanup
+                .rows
+                .iter_mut()
+                .find(|row| row.category == category)
+            {
+                row.scan = Some(scan);
+            }
+        }
+        self.cleanup.recycle_bin = recycle_bin;
+        self.cleanup.message = Some(message);
+        self.cleanup.scanning = false;
+        self.cleanup.cleaning = false;
+        self.operation_state = OperationState::Idle;
+    }
+
+    pub fn selected_cleanup_categories(&self) -> Vec<CleanupCategory> {
+        self.cleanup
+            .rows
+            .iter()
+            .filter(|row| row.selected)
+            .map(|row| row.category)
+            .collect()
+    }
+
+    /// Combined size/count of the currently selected categories.
+    pub fn selected_cleanup_totals(&self) -> Scan {
+        let mut total = Scan::default();
+        for row in &self.cleanup.rows {
+            if !row.selected {
+                continue;
+            }
+            if let Some(scan) = row.scan {
+                total.bytes += scan.bytes;
+                total.files += scan.files;
+            }
+        }
+        total
     }
 
     pub fn request_refresh(&mut self) -> PendingAction {
