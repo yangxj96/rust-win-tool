@@ -210,6 +210,10 @@ pub struct Translations {
     pub scripts_header: &'static str,
     pub script_reset_navicat: &'static str,
     pub script_reset_navicat_desc: &'static str,
+    pub script_flush_dns: &'static str,
+    pub script_flush_dns_desc: &'static str,
+    pub script_run: &'static str,
+    pub script_no_output: &'static str,
     pub script_err_open_clsid: &'static str,
     pub script_result_cleanup: &'static str,
 
@@ -418,7 +422,12 @@ pub const ZH: Translations = Translations {
 
     scripts_header: "执行脚本",
     script_reset_navicat: "重置Navicat时间",
-    script_reset_navicat_desc: "清理Navicat注册信息和CLSID残留",
+    script_reset_navicat_desc:
+        "清理Navicat注册信息和CLSID残留（删除前自动备份到 HKCU\\Software\\RustWinTool\\Backup）",
+    script_flush_dns: "刷新 DNS 缓存",
+    script_flush_dns_desc: "执行 ipconfig /flushdns 清空本机 DNS 解析缓存",
+    script_run: "运行",
+    script_no_output: "执行完成（无输出）",
     script_err_open_clsid: "无法打开 CLSID: {}",
     script_result_cleanup: "清理完成，删除了 {} 个 CLSID 键",
 
@@ -624,7 +633,11 @@ pub const EN: Translations = Translations {
 
     scripts_header: "Scripts",
     script_reset_navicat: "Reset Navicat",
-    script_reset_navicat_desc: "Clean Navicat registration and CLSID",
+    script_reset_navicat_desc: "Clean Navicat registration and CLSID residue (backed up first)",
+    script_flush_dns: "Flush DNS cache",
+    script_flush_dns_desc: "Run ipconfig /flushdns to clear the local resolver cache",
+    script_run: "Run",
+    script_no_output: "Finished (no output)",
     script_err_open_clsid: "Failed to open CLSID: {}",
     script_result_cleanup: "Cleanup done, deleted {} CLSID keys",
 

@@ -20,6 +20,11 @@ use crate::theme::{StatusColors, ThemeColors};
 use crate::ui::{components, input};
 use app_service::StartType;
 
+const SCRIPTS: [(&str, &str); 2] = [
+    ("script_reset_navicat", "script_reset_navicat_desc"),
+    ("script_flush_dns", "script_flush_dns_desc"),
+];
+
 const TOOLS: [(&str, &str); 5] = [
     ("tool_sysinfo", "tool_sysinfo_desc"),
     ("tool_processes", "tool_processes_desc"),
@@ -581,18 +586,29 @@ impl MainWindow {
     }
 
     fn run_script(&mut self, cx: &mut Context<Self>) {
-        if self.state.read(cx).scripts_selected() != 0 {
-            return;
-        }
+        let (selected, translations) = {
+            let state = self.state.read(cx);
+            (state.scripts_selected(), state.t())
+        };
         self.update_state(cx, |state| state.begin_script());
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
             let result = cx
-                .background_spawn(async { backend::reset_navicat() })
+                .background_spawn(async move {
+                    match selected {
+                        0 => backend::reset_navicat().map(|deleted| {
+                            translations
+                                .script_result_cleanup
+                                .replace("{}", &deleted.to_string())
+                        }),
+                        1 => backend::flush_dns(),
+                        _ => Ok(String::new()),
+                    }
+                })
                 .await;
             state
                 .update(cx, |state, cx| {
-                    state.set_script_result(result);
+                    state.set_script_output(result);
                     cx.notify();
                 })
                 .ok();
@@ -2561,63 +2577,124 @@ impl MainWindow {
     fn render_scripts_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
-        let row = components::card(colors)
+
+        let rows = SCRIPTS
+            .iter()
+            .enumerate()
+            .map(|(index, (name, description))| {
+                let label = script_text(translations, name);
+                let description = script_text(translations, description);
+                let selected = state.scripts_selected() == index;
+                components::card(colors)
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .w_full()
+                    .p_4()
+                    .cursor_pointer()
+                    .border_color(components::color(if selected {
+                        colors.brand.primary
+                    } else {
+                        colors.border.subtle
+                    }))
+                    .bg(components::color(if selected {
+                        colors.brand.soft
+                    } else {
+                        colors.bg.surface
+                    }))
+                    .id(("script-row", index))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_state(cx, move |state| state.select_script(index))
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(40.))
+                            .h(px(40.))
+                            .rounded_lg()
+                            .flex_shrink_0()
+                            .bg(components::color(colors.warning.soft))
+                            .text_lg()
+                            .text_color(components::color(colors.warning.text))
+                            .child(ICON_SCRIPTS),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .flex_1()
+                            .child(
+                                div()
+                                    .text_base()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(components::color(colors.fg.default))
+                                    .child(label),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(components::color(colors.fg.muted))
+                                    .child(description),
+                            ),
+                    )
+            });
+
+        let toolbar = div()
             .flex()
             .items_center()
             .gap_3()
             .w_full()
-            .p_4()
-            .cursor_pointer()
-            .id("script-reset-navicat")
-            .on_click(cx.listener(Self::script_clicked))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(40.))
-                    .h(px(40.))
-                    .rounded_lg()
-                    .flex_shrink_0()
-                    .bg(components::color(colors.warning.soft))
-                    .text_lg()
-                    .text_color(components::color(colors.warning.text))
-                    .child(ICON_SCRIPTS),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .flex_1()
-                    .child(
-                        div()
-                            .text_base()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(components::color(colors.fg.default))
-                            .child(translations.script_reset_navicat),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(components::color(colors.fg.muted))
-                            .child(translations.script_reset_navicat_desc),
-                    ),
-            )
             .child(
                 components::button(
-                    translations.hint_confirm,
+                    translations.script_run,
                     colors,
                     components::ButtonVariant::Primary,
                 )
                 .id("script-run")
                 .on_click(cx.listener(Self::script_clicked)),
-            );
-        let mut page = div().flex().flex_col().gap_4().size_full().p_6().child(row);
-        if let Some(result) = state.script_result() {
-            page = page.child(components::alert(result.to_string(), &colors.info));
-        }
-        page
+            )
+            .children(state.script_running().then(|| {
+                div()
+                    .text_sm()
+                    .text_color(components::color(colors.fg.muted))
+                    .child(translations.status_refreshing)
+            }));
+
+        let output = state.script_output().map(|text| {
+            components::card(colors)
+                .flex()
+                .flex_col()
+                .gap_2()
+                .w_full()
+                .flex_1()
+                .p_4()
+                .child(components::card_title(translations.scripts_header, colors))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .w_full()
+                        .flex_1()
+                        .id("script-output")
+                        .overflow_y_scroll()
+                        .text_sm()
+                        .text_color(components::color(colors.fg.default))
+                        .child(text.to_string()),
+                )
+        });
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .size_full()
+            .p_6()
+            .child(toolbar)
+            .child(div().flex().flex_col().gap_3().w_full().children(rows))
+            .children(output)
     }
 
     fn render_settings_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
@@ -4473,6 +4550,16 @@ fn cleanup_category_label(
         CleanupCategory::WindowsTemp => translations.cleanup_cat_windows_temp,
         CleanupCategory::ThumbnailCache => translations.cleanup_cat_thumbnails,
         CleanupCategory::WindowsUpdate => translations.cleanup_cat_windows_update,
+    }
+}
+
+fn script_text(translations: &crate::i18n::Translations, key: &str) -> &'static str {
+    match key {
+        "script_reset_navicat" => translations.script_reset_navicat,
+        "script_reset_navicat_desc" => translations.script_reset_navicat_desc,
+        "script_flush_dns" => translations.script_flush_dns,
+        "script_flush_dns_desc" => translations.script_flush_dns_desc,
+        _ => "",
     }
 }
 

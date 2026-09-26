@@ -15,6 +15,7 @@ use crate::theme::{ThemeColors, DARK, LIGHT};
 pub use crate::backend::SystemInfo;
 
 const TOOLS_COUNT: usize = 5;
+const SCRIPTS_COUNT: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
@@ -309,7 +310,8 @@ pub struct AppState {
     theme: Theme,
     tools_selected: usize,
     scripts_selected: usize,
-    script_result: Option<String>,
+    script_output: Option<String>,
+    script_running: bool,
     tool_detail_active: bool,
     system_info: Option<SystemInfo>,
     system_info_loading: bool,
@@ -363,7 +365,8 @@ impl AppState {
             theme: settings.theme,
             tools_selected: 0,
             scripts_selected: 0,
-            script_result: None,
+            script_output: None,
+            script_running: false,
             tool_detail_active: false,
             system_info: None,
             system_info_loading: false,
@@ -1168,6 +1171,12 @@ impl AppState {
         self.scripts_selected
     }
 
+    pub fn select_script(&mut self, index: usize) {
+        if index < SCRIPTS_COUNT {
+            self.scripts_selected = index;
+        }
+    }
+
     pub fn tool_detail_active(&self) -> bool {
         self.tool_detail_active
     }
@@ -1235,20 +1244,24 @@ impl AppState {
     }
 
     pub fn begin_script(&mut self) {
-        self.script_result = None;
+        self.script_output = None;
+        self.script_running = true;
         self.operation_state = OperationState::RunningScript;
     }
 
-    pub fn script_result(&self) -> Option<&str> {
-        self.script_result.as_deref()
+    pub fn script_running(&self) -> bool {
+        self.script_running
     }
 
-    pub fn set_script_result(&mut self, result: Result<u32, BackendError>) {
-        self.script_result = Some(match result {
-            Ok(deleted) => self
-                .t()
-                .script_result_cleanup
-                .replace("{}", &deleted.to_string()),
+    pub fn script_output(&self) -> Option<&str> {
+        self.script_output.as_deref()
+    }
+
+    pub fn set_script_output(&mut self, result: Result<String, BackendError>) {
+        self.script_running = false;
+        self.script_output = Some(match result {
+            Ok(text) if text.trim().is_empty() => self.t().script_no_output.to_string(),
+            Ok(text) => text,
             Err(error) => map_error(&error, self.language),
         });
         self.operation_state = OperationState::Idle;

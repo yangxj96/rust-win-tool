@@ -94,6 +94,30 @@ pub fn list_startup() -> Result<Vec<crate::startup::StartupItem>, BackendError> 
     Ok(crate::startup::list())
 }
 
+pub fn run_command(command: &str) -> Result<String, BackendError> {
+    let mut cmd = Command::new("cmd");
+    cmd.args(["/C", command]);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd
+        .output()
+        .map_err(|error| BackendError::Command(error.to_string()))?;
+    let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.trim().is_empty() {
+        text.push('\n');
+        text.push_str(&stderr);
+    }
+    if !output.status.success() {
+        return Err(BackendError::Command(text.trim().to_string()));
+    }
+    Ok(text.trim().to_string())
+}
+
+pub fn flush_dns() -> Result<String, BackendError> {
+    run_command("ipconfig /flushdns")
+}
+
 pub fn set_startup_enabled(
     location: crate::startup::StartupLocation,
     value_name: &str,
@@ -230,6 +254,12 @@ pub fn reset_navicat() -> Result<u32, BackendError> {
     let _ = hku.delete_subkey_all(r"Software\PremiumSoft\NavicatPremium\Registration17XCS");
     let _ = hku.delete_subkey_all(r"Software\PremiumSoft\NavicatPremium\Update");
 
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let backup_root = format!(r"Software\RustWinTool\Backup\{stamp}\CLSID");
+
     let clsid_path = r"Software\Classes\CLSID";
     let clsid = hku
         .open_subkey_with_flags(clsid_path, KEY_READ)
@@ -239,13 +269,45 @@ pub fn reset_navicat() -> Result<u32, BackendError> {
     for key_name in clsid.enum_keys().filter_map(Result::ok) {
         let full_path = format!(r"{}\{}", clsid_path, key_name);
         if should_delete_key(&hku, &full_path) {
+            // Copy the key aside before removing it so the change is reversible.
+            let backup_path = format!(r"{}\{}", backup_root, key_name);
+            let _ = copy_key_tree(&hku, &full_path, &backup_path);
             hku.delete_subkey_all(&full_path)
                 .map_err(|error| BackendError::Registry(error.to_string()))?;
             deleted += 1;
         }
     }
 
+    if deleted > 0 {
+        crate::logging::log(&format!(
+            "navicat cleanup removed {deleted} CLSID keys, backup at HKCU\\{backup_root}"
+        ));
+    }
     Ok(deleted)
+}
+
+/// Recursively copy a registry key so a cleanup can be undone.
+#[cfg(windows)]
+fn copy_key_tree(
+    root: &winreg::RegKey,
+    source_path: &str,
+    destination_path: &str,
+) -> std::io::Result<()> {
+    use winreg::enums::KEY_READ;
+
+    let source = root.open_subkey_with_flags(source_path, KEY_READ)?;
+    let (destination, _) = root.create_subkey(destination_path)?;
+    for (name, data) in source.enum_values().flatten() {
+        let _ = destination.set_raw_value(name, &data);
+    }
+    for name in source.enum_keys().flatten() {
+        let _ = copy_key_tree(
+            root,
+            &format!(r"{source_path}\{name}"),
+            &format!(r"{destination_path}\{name}"),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
