@@ -86,6 +86,10 @@ pub fn terminate_process(pid: u32) -> Result<(), BackendError> {
     crate::process::terminate(pid).map_err(BackendError::Command)
 }
 
+pub fn sample_metrics() -> Result<crate::monitor::Metrics, BackendError> {
+    Ok(crate::monitor::sample())
+}
+
 #[derive(Debug, Clone)]
 pub enum ServiceOperation {
     Start(String),

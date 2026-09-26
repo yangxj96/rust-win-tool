@@ -1,8 +1,8 @@
 use std::ops::Range;
 
 use gpui::{
-    canvas, div, point, prelude::*, px, rgba, Animation, AnimationExt, AnyElement, AppContext,
-    Bounds, ClickEvent, Context, Div, DragMoveEvent, ElementInputHandler, Entity,
+    canvas, div, point, prelude::*, px, relative, rgba, Animation, AnimationExt, AnyElement,
+    AppContext, Bounds, ClickEvent, Context, Div, DragMoveEvent, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, FontWeight, KeyDownEvent, Pixels, Point, Render, ScrollHandle,
     Timer, UTF16Selection, Window, WindowControlArea,
 };
@@ -19,9 +19,10 @@ use crate::theme::{StatusColors, ThemeColors};
 use crate::ui::{components, input};
 use app_service::StartType;
 
-const TOOLS: [(&str, &str); 2] = [
+const TOOLS: [(&str, &str); 3] = [
     ("tool_sysinfo", "tool_sysinfo_desc"),
     ("tool_processes", "tool_processes_desc"),
+    ("tool_monitor", "tool_monitor_desc"),
 ];
 
 const SERVICE_NAME_COLUMN_WIDTH: f32 = 180.;
@@ -52,6 +53,8 @@ pub struct MainWindow {
     history_open: bool,
     /// Process awaiting termination confirmation: (pid, name).
     pending_kill: Option<(u32, String)>,
+    /// Whether the monitor sampling loop has been started.
+    monitor_started: bool,
     /// Whether a first refresh has already happened, so the launch refresh does
     /// not show the completion notice.
     refresh_notice_ready: bool,
@@ -99,6 +102,7 @@ impl MainWindow {
             pending_empty_bin: false,
             history_open: false,
             pending_kill: None,
+            monitor_started: false,
             refresh_notice_ready: false,
         }
     }
@@ -476,7 +480,37 @@ impl MainWindow {
                     .ok();
             })
             .detach();
+        } else if self.state.read(cx).monitor_active() {
+            self.ensure_monitor_loop(cx);
         }
+    }
+
+    fn ensure_monitor_loop(&mut self, cx: &mut Context<Self>) {
+        if self.monitor_started {
+            return;
+        }
+        self.monitor_started = true;
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| loop {
+            let active = state
+                .read_with(cx, |state, _| state.monitor_active())
+                .unwrap_or(false);
+            if active {
+                let result = cx
+                    .background_spawn(async { backend::sample_metrics() })
+                    .await;
+                state
+                    .update(cx, |state, cx| {
+                        if let Ok(metrics) = result {
+                            state.push_metrics(metrics);
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+            }
+            Timer::after(Duration::from_millis(1000)).await;
+        })
+        .detach();
     }
 
     fn refresh_processes(&mut self, cx: &mut Context<Self>) {
@@ -1292,6 +1326,7 @@ impl MainWindow {
         if state.tool_detail_active() {
             return match state.tools_selected() {
                 1 => self.render_process_list(state, cx),
+                2 => self.render_monitor(state, cx),
                 _ => self.render_system_info(state, cx),
             };
         }
@@ -1381,6 +1416,246 @@ impl MainWindow {
                 .id("tool-list")
                 .overflow_y_scroll(),
         )
+    }
+
+    fn render_monitor(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let colors = state.theme_colors();
+        let monitor = state.monitor();
+        let latest = monitor.latest.as_ref();
+
+        let cpu_percent = latest.map(|metrics| metrics.cpu_percent).unwrap_or(0.0);
+        let memory_percent = latest.map(|metrics| metrics.memory_percent).unwrap_or(0.0);
+        let (memory_used, memory_total) = latest
+            .map(|metrics| (metrics.memory_used, metrics.memory_total))
+            .unwrap_or((0, 0));
+        let (net_rx, net_tx) = latest
+            .map(|metrics| (metrics.net_rx_bps, metrics.net_tx_bps))
+            .unwrap_or((0.0, 0.0));
+        let disks = latest
+            .map(|metrics| metrics.disks.clone())
+            .unwrap_or_default();
+
+        let toolbar = div().flex().items_center().w_full().child(
+            components::button(
+                translations.sysinfo_back,
+                colors,
+                components::ButtonVariant::Secondary,
+            )
+            .id("monitor-back")
+            .on_click(cx.listener(|this, _event, _window, cx| {
+                this.update_state(cx, |state| state.close_tool_detail());
+            })),
+        );
+
+        let cpu_card = components::card(colors)
+            .flex()
+            .flex_col()
+            .gap_2()
+            .w_full()
+            .p_4()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .w_full()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(components::color(colors.fg.muted))
+                            .child(translations.mon_cpu),
+                    )
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(components::color(colors.brand.primary))
+                            .child(format!("{cpu_percent:.0}%")),
+                    ),
+            )
+            .child(components::sparkline(
+                &monitor.cpu_history,
+                colors.brand.primary,
+            ));
+
+        let memory_card = components::card(colors)
+            .flex()
+            .flex_col()
+            .gap_2()
+            .w_full()
+            .p_4()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .w_full()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(components::color(colors.fg.muted))
+                            .child(translations.mon_memory),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(components::color(colors.fg.subtle))
+                                    .child(format!(
+                                        "{} {} / {}",
+                                        translations.mon_used,
+                                        cleanup::format_bytes(memory_used),
+                                        cleanup::format_bytes(memory_total)
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(components::color(colors.success.text))
+                                    .child(format!("{memory_percent:.0}%")),
+                            ),
+                    ),
+            )
+            .child(components::sparkline(
+                &monitor.memory_history,
+                colors.success.text,
+            ));
+
+        let network_card = components::card(colors)
+            .flex()
+            .items_center()
+            .justify_between()
+            .w_full()
+            .p_4()
+            .child(components::card_title(translations.mon_network, colors))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_4()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_sm()
+                            .text_color(components::color(colors.fg.muted))
+                            .child(translations.mon_rx)
+                            .child(
+                                div()
+                                    .text_color(components::color(colors.fg.default))
+                                    .child(crate::monitor::format_rate(net_rx)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_sm()
+                            .text_color(components::color(colors.fg.muted))
+                            .child(translations.mon_tx)
+                            .child(
+                                div()
+                                    .text_color(components::color(colors.fg.default))
+                                    .child(crate::monitor::format_rate(net_tx)),
+                            ),
+                    ),
+            );
+
+        let disk_card = components::card(colors)
+            .flex()
+            .flex_col()
+            .gap_2()
+            .w_full()
+            .p_4()
+            .child(components::card_title(translations.mon_disk, colors))
+            .children(disks.into_iter().map(|disk| {
+                let used = disk.total.saturating_sub(disk.free);
+                let fraction = if disk.total > 0 {
+                    used as f32 / disk.total as f32
+                } else {
+                    0.0
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .w_full()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .w_full()
+                            .text_sm()
+                            .text_color(components::color(colors.fg.default))
+                            .child(disk.name.clone())
+                            .child(div().text_color(components::color(colors.fg.muted)).child(
+                                format!(
+                                    "{} {} / {}",
+                                    translations.mon_free,
+                                    cleanup::format_bytes(disk.free),
+                                    cleanup::format_bytes(disk.total)
+                                ),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(6.))
+                            .rounded_full()
+                            .overflow_hidden()
+                            .bg(components::color(colors.bg.muted))
+                            .child(
+                                div()
+                                    .h_full()
+                                    .rounded_full()
+                                    .bg(components::color(colors.brand.primary))
+                                    .w(relative(fraction.clamp(0.0, 1.0))),
+                            ),
+                    )
+            }));
+
+        let body: AnyElement = if latest.is_none() {
+            div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_color(components::color(colors.fg.muted))
+                .child(translations.mon_waiting)
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .w_full()
+                .flex_1()
+                .id("monitor-body")
+                .overflow_y_scroll()
+                .child(cpu_card)
+                .child(memory_card)
+                .child(network_card)
+                .child(disk_card)
+                .into_any_element()
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .size_full()
+            .p_6()
+            .child(toolbar)
+            .child(body)
     }
 
     fn render_process_list(&self, state: &AppState, cx: &Context<Self>) -> Div {
@@ -3660,6 +3935,8 @@ fn tool_text(translations: &crate::i18n::Translations, key: &str) -> &'static st
         "tool_sysinfo_desc" => translations.tool_sysinfo_desc,
         "tool_processes" => translations.tool_processes,
         "tool_processes_desc" => translations.tool_processes_desc,
+        "tool_monitor" => translations.tool_monitor,
+        "tool_monitor_desc" => translations.tool_monitor_desc,
         _ => "",
     }
 }
@@ -3776,9 +4053,10 @@ mod tests {
     }
 
     #[test]
-    fn tools_catalog_lists_system_info_and_processes() {
-        assert_eq!(TOOLS.len(), 2);
+    fn tools_catalog_lists_all_tools() {
+        assert_eq!(TOOLS.len(), 3);
         assert_eq!(TOOLS[0], ("tool_sysinfo", "tool_sysinfo_desc"));
         assert_eq!(TOOLS[1], ("tool_processes", "tool_processes_desc"));
+        assert_eq!(TOOLS[2], ("tool_monitor", "tool_monitor_desc"));
     }
 }

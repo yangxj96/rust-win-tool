@@ -263,6 +263,23 @@ pub fn card_title(text: impl Into<SharedString>, colors: &ThemeColors) -> Div {
         .child(text.into())
 }
 
+/// Bar sparkline for a series of 0..=1 values, anchored to the bottom.
+pub fn sparkline(values: &[f32], accent: u32) -> Div {
+    gpui::div()
+        .flex()
+        .items_end()
+        .gap(px(1.))
+        .h(px(48.))
+        .w_full()
+        .children(values.iter().map(|&value| {
+            gpui::div()
+                .flex_1()
+                .rounded_t_sm()
+                .bg(color(accent))
+                .h(relative(value.clamp(0.02, 1.0)))
+        }))
+}
+
 /// Indeterminate progress bar shown while a refresh is in flight.
 pub fn progress_bar(colors: &ThemeColors) -> Div {
     gpui::div()

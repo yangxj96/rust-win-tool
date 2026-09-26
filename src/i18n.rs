@@ -124,6 +124,19 @@ pub struct Translations {
     pub proc_confirm_title: &'static str,
     pub proc_confirm_message: &'static str,
 
+    // 实时监控
+    pub tool_monitor: &'static str,
+    pub tool_monitor_desc: &'static str,
+    pub mon_cpu: &'static str,
+    pub mon_memory: &'static str,
+    pub mon_disk: &'static str,
+    pub mon_network: &'static str,
+    pub mon_rx: &'static str,
+    pub mon_tx: &'static str,
+    pub mon_free: &'static str,
+    pub mon_used: &'static str,
+    pub mon_waiting: &'static str,
+
     // 服务视图
     pub svc_header: &'static str,
     pub svc_selected: &'static str,
@@ -298,6 +311,18 @@ pub const ZH: Translations = Translations {
     proc_confirm_title: "结束进程",
     proc_confirm_message: "确定要结束「{}」(PID {}) 吗？未保存的数据会丢失。",
 
+    tool_monitor: "实时监控",
+    tool_monitor_desc: "查看 CPU、内存、磁盘与网络使用情况",
+    mon_cpu: "CPU 使用率",
+    mon_memory: "内存使用率",
+    mon_disk: "磁盘",
+    mon_network: "网络",
+    mon_rx: "下行",
+    mon_tx: "上行",
+    mon_free: "可用",
+    mon_used: "已用",
+    mon_waiting: "正在采集...",
+
     svc_header: "服务管理",
     svc_selected: "选中",
     svc_none: "未选择",
@@ -464,6 +489,18 @@ pub const EN: Translations = Translations {
     proc_sort_pid: "PID",
     proc_confirm_title: "End process",
     proc_confirm_message: "End “{}” (PID {})? Unsaved data will be lost.",
+
+    tool_monitor: "Monitor",
+    tool_monitor_desc: "CPU, memory, disk and network usage",
+    mon_cpu: "CPU usage",
+    mon_memory: "Memory usage",
+    mon_disk: "Disks",
+    mon_network: "Network",
+    mon_rx: "Down",
+    mon_tx: "Up",
+    mon_free: "Free",
+    mon_used: "Used",
+    mon_waiting: "Sampling...",
 
     svc_header: "Service Management",
     svc_selected: "Selected",

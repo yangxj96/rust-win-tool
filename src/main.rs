@@ -10,6 +10,7 @@ mod cleanup;
 mod file_dialog;
 mod i18n;
 mod logging;
+mod monitor;
 mod process;
 mod theme;
 mod tray;

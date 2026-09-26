@@ -7,12 +7,13 @@ use std::path::{Path, PathBuf};
 use crate::backend::BackendError;
 use crate::cleanup::{CleanupCategory, DeleteMode, Scan};
 use crate::i18n::{Language, Translations, EN, ZH};
+use crate::monitor::Metrics;
 use crate::process::ProcessInfo;
 use crate::theme::{ThemeColors, DARK, LIGHT};
 
 pub use crate::backend::SystemInfo;
 
-const TOOLS_COUNT: usize = 2;
+const TOOLS_COUNT: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
@@ -235,6 +236,17 @@ pub struct CleanupRow {
     pub scan: Option<Scan>,
 }
 
+/// Live system monitor state: latest sample plus short histories for charts.
+#[derive(Default)]
+pub struct MonitorState {
+    pub active: bool,
+    pub latest: Option<Metrics>,
+    pub cpu_history: Vec<f32>,
+    pub memory_history: Vec<f32>,
+}
+
+const MONITOR_HISTORY: usize = 60;
+
 /// Junk cleanup page state.
 pub struct CleanupState {
     pub scanning: bool,
@@ -301,6 +313,7 @@ pub struct AppState {
     processes_loading: bool,
     processes_error: Option<String>,
     process_sort: ProcessSort,
+    monitor: MonitorState,
     /// Transient message shown after a refresh completes.
     refresh_notice: Option<String>,
 }
@@ -349,6 +362,7 @@ impl AppState {
             processes_loading: false,
             processes_error: None,
             process_sort: ProcessSort::Memory,
+            monitor: MonitorState::default(),
             refresh_notice: None,
         }
     }
@@ -681,6 +695,30 @@ impl AppState {
                 self.operation_state = OperationState::Error;
             }
         }
+    }
+
+    pub fn monitor(&self) -> &MonitorState {
+        &self.monitor
+    }
+
+    pub fn monitor_active(&self) -> bool {
+        self.monitor.active
+    }
+
+    pub fn end_monitor(&mut self) {
+        self.monitor.active = false;
+    }
+
+    pub fn push_metrics(&mut self, metrics: Metrics) {
+        self.monitor.cpu_history.push(metrics.cpu_percent);
+        self.monitor.memory_history.push(metrics.memory_percent);
+        if self.monitor.cpu_history.len() > MONITOR_HISTORY {
+            self.monitor.cpu_history.remove(0);
+        }
+        if self.monitor.memory_history.len() > MONITOR_HISTORY {
+            self.monitor.memory_history.remove(0);
+        }
+        self.monitor.latest = Some(metrics);
     }
 
     /// Process list ordered by the current sort setting.
@@ -1028,6 +1066,9 @@ impl AppState {
                 self.processes_error = None;
                 self.operation_state = OperationState::LoadingSystemInfo;
             }
+            2 => {
+                self.monitor.active = true;
+            }
             _ => {}
         }
         true
@@ -1035,6 +1076,7 @@ impl AppState {
 
     pub fn close_tool_detail(&mut self) {
         self.tool_detail_active = false;
+        self.end_monitor();
     }
 
     pub fn system_info(&self) -> Option<&SystemInfo> {
@@ -1230,13 +1272,14 @@ mod tests {
     fn tools_are_selectable_up_to_the_catalog_size() {
         let mut state = AppState::new();
 
-        state.select_tool(2);
+        state.select_tool(3);
         assert_eq!(state.tools_selected(), 0);
 
-        state.select_tool(1);
-        assert_eq!(state.tools_selected(), 1);
+        state.select_tool(2);
+        assert_eq!(state.tools_selected(), 2);
         assert!(state.open_tool_detail());
         assert!(state.tool_detail_active());
+        assert!(state.monitor_active());
     }
 
     #[test]
