@@ -7,7 +7,7 @@ use gpui::prelude::*;
 use gpui::{px, relative, rgb, rgba, Animation, AnimationExt, Div, FontWeight, Rgba, SharedString};
 use std::time::Duration;
 
-use crate::theme::{StatusColors, ThemeColors};
+use crate::ui::theme::{StatusColors, ThemeColors};
 
 /// 将通用的 `0xRRGGBB` 颜色值转换为 GPUI 颜色。
 pub fn color(value: u32) -> Rgba {
@@ -447,7 +447,7 @@ pub fn alert(text: impl Into<SharedString>, status: &StatusColors) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::LIGHT;
+    use crate::ui::theme::LIGHT;
 
     #[test]
     fn visual_primitives_can_be_constructed() {

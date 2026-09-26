@@ -107,7 +107,7 @@ impl MainWindow {
                 )
                 .id("setting-open-logs")
                 .debug_selector(|| "setting-open-logs".to_string())
-                .on_click(cx.listener(|_, _, _, _| crate::logging::open_dir())),
+                .on_click(cx.listener(|_, _, _, _| crate::support::logging::open_dir())),
             );
 
         div()

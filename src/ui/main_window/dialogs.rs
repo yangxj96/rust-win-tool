@@ -4,7 +4,7 @@
 
 use super::shared::*;
 use super::*;
-use crate::cleanup as cleanup_backend;
+use crate::features::cleanup as cleanup_backend;
 
 impl MainWindow {
     pub(super) fn render_add_dialog(

@@ -14,7 +14,7 @@
 
 `rust-win-tool` 是一个以 Rust 和 GPUI 编写的 Windows 桌面系统管理工具。程序提供服务管理、系统状态查看、进程和启动项管理、网络诊断、垃圾文件清理及脚本执行等功能。服务查询、注册表、启动项、进程、回收站等能力依赖 Windows 原生 API。
 
-项目入口是根目录的 `Cargo.toml`。服务管理代码现在位于 `src/service.rs`，作为应用内部模块编译；项目没有独立的 `lib/service` crate。
+项目入口是根目录的 `Cargo.toml`。Rust 入口位于 `src/main.rs`；应用按服务、清理、脚本、工具、平台支撑和界面等功能域组织在 `src/` 下。
 
 ## 文档约定
 

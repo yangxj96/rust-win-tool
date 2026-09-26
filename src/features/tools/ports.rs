@@ -117,7 +117,7 @@ mod platform {
         if let Some(value) = cache.get(&pid) {
             return value.clone();
         }
-        let value = crate::process::name_for_pid(pid);
+        let value = crate::features::tools::processes::name_for_pid(pid);
         cache.insert(pid, value.clone());
         value
     }
@@ -244,4 +244,9 @@ mod tests {
             assert_eq!(entry.local_port, 0);
         }
     }
+}
+
+/// 查找占用指定本地 TCP/UDP 端口的进程和网络端点。
+pub fn lookup_port(port: u16) -> Result<Vec<PortEntry>, crate::shared::BackendError> {
+    Ok(lookup(port))
 }

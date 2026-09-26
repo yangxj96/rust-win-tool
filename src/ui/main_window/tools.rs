@@ -4,7 +4,7 @@
 
 use super::shared::*;
 use super::*;
-use crate::cleanup as cleanup_backend;
+use crate::features::cleanup as cleanup_backend;
 
 impl MainWindow {
     pub(super) fn render_tools_page(
@@ -243,7 +243,7 @@ impl MainWindow {
                             .child(
                                 div()
                                     .text_color(components::color(colors.fg.default))
-                                    .child(crate::monitor::format_rate(net_rx)),
+                                    .child(crate::features::tools::monitor::format_rate(net_rx)),
                             ),
                     )
                     .child(
@@ -257,7 +257,7 @@ impl MainWindow {
                             .child(
                                 div()
                                     .text_color(components::color(colors.fg.default))
-                                    .child(crate::monitor::format_rate(net_tx)),
+                                    .child(crate::features::tools::monitor::format_rate(net_tx)),
                             ),
                     ),
             );
@@ -883,11 +883,9 @@ impl MainWindow {
                             .text_ellipsis()
                             .child(name.clone()),
                     )
-                    .child(
-                        div()
-                            .w(px(110.))
-                            .child(crate::process::format_memory(process.memory_bytes)),
-                    )
+                    .child(div().w(px(110.)).child(
+                        crate::features::tools::processes::format_memory(process.memory_bytes),
+                    ))
                     .child(
                         div()
                             .w(px(80.))
@@ -1083,7 +1081,7 @@ impl MainWindow {
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
             let result = cx
-                .background_spawn(async { backend::fetch_system_info() })
+                .background_spawn(async { system_info::fetch_system_info() })
                 .await;
             state
                 .update(cx, |state, cx| {
@@ -1154,7 +1152,7 @@ impl MainWindow {
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
             let result = cx
-                .background_spawn(async move { backend::lookup_port(port) })
+                .background_spawn(async move { crate::features::tools::ports::lookup_port(port) })
                 .await;
             state
                 .update(cx, |state, cx| {
@@ -1175,7 +1173,7 @@ impl MainWindow {
         self.update_state(cx, |state| state.begin_startup_refresh());
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
-            let result = cx.background_spawn(async { backend::list_startup() }).await;
+            let result = cx.background_spawn(async { startup::list_startup() }).await;
             state
                 .update(cx, |state, cx| {
                     state.set_startup(result);
@@ -1197,10 +1195,10 @@ impl MainWindow {
         cx.spawn(async move |_this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    backend::set_startup_enabled(location, &value_name, enabled)
+                    startup::set_startup_enabled(location, &value_name, enabled)
                 })
                 .await;
-            let list = cx.background_spawn(async { backend::list_startup() }).await;
+            let list = cx.background_spawn(async { startup::list_startup() }).await;
             state
                 .update(cx, |state, cx| {
                     state.set_startup(list);
@@ -1229,15 +1227,17 @@ impl MainWindow {
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
             let result = cx
-                .background_spawn(async move { backend::terminate_process(pid) })
+                .background_spawn(async move { processes::terminate_process(pid) })
                 .await;
             let list = cx
-                .background_spawn(async { backend::list_processes() })
+                .background_spawn(async { processes::list_processes() })
                 .await;
             let port_result = match port {
                 Some(port) => Some(
-                    cx.background_spawn(async move { backend::lookup_port(port) })
-                        .await,
+                    cx.background_spawn(
+                        async move { crate::features::tools::ports::lookup_port(port) },
+                    )
+                    .await,
                 ),
                 None => None,
             };
@@ -1324,25 +1324,27 @@ impl MainWindow {
             let result = cx
                 .background_spawn(async move {
                     match kind {
-                        NetCheck::Ping => crate::network::ping(&host, 4, 1000).map(|summary| {
-                            format!(
-                                "{}/{}  {} ms",
-                                summary.received, summary.sent, summary.avg_ms
-                            )
+                        NetCheck::Ping => crate::features::tools::network::ping(&host, 4, 1000)
+                            .map(|summary| {
+                                format!(
+                                    "{}/{}  {} ms",
+                                    summary.received, summary.sent, summary.avg_ms
+                                )
+                            }),
+                        NetCheck::Dns => crate::features::tools::network::resolve(&host)
+                            .map(|ips| crate::features::tools::network::format_addresses(&ips)),
+                        NetCheck::Port => crate::features::tools::network::check_port(
+                            &host,
+                            port,
+                            Duration::from_secs(3),
+                        )
+                        .map(|open| {
+                            if open {
+                                translations.net_open.to_string()
+                            } else {
+                                translations.net_closed.to_string()
+                            }
                         }),
-                        NetCheck::Dns => crate::network::resolve(&host)
-                            .map(|ips| crate::network::format_addresses(&ips)),
-                        NetCheck::Port => {
-                            crate::network::check_port(&host, port, Duration::from_secs(3)).map(
-                                |open| {
-                                    if open {
-                                        translations.net_open.to_string()
-                                    } else {
-                                        translations.net_closed.to_string()
-                                    }
-                                },
-                            )
-                        }
                     }
                 })
                 .await;

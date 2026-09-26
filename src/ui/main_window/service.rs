@@ -559,7 +559,9 @@ impl MainWindow {
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
             let result = cx
-                .background_spawn(async move { backend::service_details(&lookup) })
+                .background_spawn(async move {
+                    crate::features::services::operations::service_details(&lookup)
+                })
                 .await;
             state
                 .update(cx, |state, cx| {
@@ -619,16 +621,20 @@ impl MainWindow {
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
             let path = cx
-                .background_spawn(async { crate::file_dialog::save_file("managed_services.json") })
+                .background_spawn(async {
+                    crate::platform::file_dialog::save_file("managed_services.json")
+                })
                 .await;
             let Some(path) = path else {
                 return;
             };
             let target = path.clone();
             let result = cx
-                .background_spawn(
-                    async move { backend::export_managed_services(&target, &services) },
-                )
+                .background_spawn(async move {
+                    crate::features::services::operations::export_managed_services(
+                        &target, &services,
+                    )
+                })
                 .await;
             state
                 .update(cx, |state, cx| {
@@ -663,13 +669,15 @@ impl MainWindow {
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
             let path = cx
-                .background_spawn(async { crate::file_dialog::open_file() })
+                .background_spawn(async { crate::platform::file_dialog::open_file() })
                 .await;
             let Some(path) = path else {
                 return;
             };
             let result = cx
-                .background_spawn(async move { backend::import_managed_services(&path) })
+                .background_spawn(async move {
+                    crate::features::services::operations::import_managed_services(&path)
+                })
                 .await;
             let services = match result {
                 Ok(services) => services,
@@ -697,7 +705,9 @@ impl MainWindow {
                 .ok();
             let results = cx
                 .background_spawn(async move {
-                    backend::execute_service_operation(ServiceOperation::RefreshAll(names))
+                    crate::features::services::operations::execute_service_operation(
+                        ServiceOperation::RefreshAll(names),
+                    )
                 })
                 .await;
             state
@@ -734,7 +744,9 @@ impl MainWindow {
         let history_name = name.clone();
         cx.spawn(async move |_this, cx| {
             let result = cx
-                .background_spawn(async move { backend::set_service_start_type(&name, start_type) })
+                .background_spawn(async move {
+                    crate::features::services::operations::set_service_start_type(&name, start_type)
+                })
                 .await;
             state
                 .update(cx, |state, cx| {
@@ -752,7 +764,7 @@ impl MainWindow {
                             .map(|error| error.to_string())
                             .unwrap_or_default(),
                     });
-                    crate::logging::log(&format!(
+                    crate::support::logging::log(&format!(
                         "StartType {} ({:?}) -> {}",
                         history_name,
                         start_type,

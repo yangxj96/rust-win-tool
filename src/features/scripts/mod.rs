@@ -1,5 +1,7 @@
 //! 与其他配置一同持久化保存的用户自定义脚本。
 
+pub mod runtime;
+
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

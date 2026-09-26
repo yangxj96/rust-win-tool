@@ -95,7 +95,7 @@ pub(super) fn segment(
 
 pub(super) fn status_label(
     status: ServiceStatus,
-    translations: &crate::i18n::Translations,
+    translations: &crate::ui::i18n::Translations,
 ) -> &'static str {
     match status {
         ServiceStatus::Running => translations.status_running,
@@ -119,7 +119,7 @@ pub(super) fn status_colors(status: ServiceStatus, colors: &ThemeColors) -> &Sta
 
 pub(super) fn startup_source_label(
     location: StartupLocation,
-    translations: &crate::i18n::Translations,
+    translations: &crate::ui::i18n::Translations,
 ) -> &'static str {
     match location {
         StartupLocation::RegistryHkcu => translations.startup_src_hkcu,
@@ -142,7 +142,7 @@ pub(super) fn net_port_id(port: u16) -> &'static str {
 
 pub(super) fn service_sort_label(
     sort: ServiceSort,
-    translations: &crate::i18n::Translations,
+    translations: &crate::ui::i18n::Translations,
 ) -> &'static str {
     match sort {
         ServiceSort::Manual => translations.sort_manual,
@@ -153,7 +153,7 @@ pub(super) fn service_sort_label(
 
 pub(super) fn history_action_label(
     action: HistoryAction,
-    translations: &crate::i18n::Translations,
+    translations: &crate::ui::i18n::Translations,
 ) -> &'static str {
     match action {
         HistoryAction::Start => translations.action_start,
@@ -198,7 +198,7 @@ pub(super) fn join_list(items: &[String], empty: &str) -> String {
 
 pub(super) fn cleanup_category_label(
     category: CleanupCategory,
-    translations: &crate::i18n::Translations,
+    translations: &crate::ui::i18n::Translations,
 ) -> &'static str {
     match category {
         CleanupCategory::UserTemp => translations.cleanup_cat_user_temp,
@@ -208,7 +208,7 @@ pub(super) fn cleanup_category_label(
     }
 }
 
-pub(super) fn script_text(translations: &crate::i18n::Translations, key: &str) -> &'static str {
+pub(super) fn script_text(translations: &crate::ui::i18n::Translations, key: &str) -> &'static str {
     match key {
         "script_reset_navicat" => translations.script_reset_navicat,
         "script_reset_navicat_desc" => translations.script_reset_navicat_desc,
@@ -218,7 +218,7 @@ pub(super) fn script_text(translations: &crate::i18n::Translations, key: &str) -
     }
 }
 
-pub(super) fn tool_text(translations: &crate::i18n::Translations, key: &str) -> &'static str {
+pub(super) fn tool_text(translations: &crate::ui::i18n::Translations, key: &str) -> &'static str {
     match key {
         "tool_sysinfo" => translations.tool_sysinfo,
         "tool_sysinfo_desc" => translations.tool_sysinfo_desc,

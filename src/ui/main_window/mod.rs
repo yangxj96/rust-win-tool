@@ -17,13 +17,14 @@ use crate::app::{
     AppState, HistoryAction, HistoryEntry, OperationState, PendingAction, ProcessSort,
     ServiceFilter, ServiceSort, ServiceStatus, Theme, View,
 };
-use crate::backend::{self, ServiceOperation};
-use crate::cleanup::{CleanupCategory, DeleteMode};
-use crate::i18n::Language;
-use crate::scripts::ScriptKind;
-use crate::service::StartType;
-use crate::startup::StartupLocation;
-use crate::theme::{StatusColors, ThemeColors};
+use crate::features::cleanup::{CleanupCategory, DeleteMode};
+use crate::features::scripts::ScriptKind;
+use crate::features::services::operations::{self as service_backend, ServiceOperation};
+use crate::features::services::StartType;
+use crate::features::tools::startup::StartupLocation;
+use crate::features::tools::{monitor, network, processes, startup, system_info};
+use crate::ui::i18n::Language;
+use crate::ui::theme::{StatusColors, ThemeColors};
 use crate::ui::{components, input};
 
 const SCRIPTS: [(&str, &str); 2] = [
@@ -256,7 +257,7 @@ impl MainWindow {
         #[cfg(target_os = "windows")]
         {
             let _ = &window;
-            crate::tray::hide_main_window();
+            crate::platform::windows::tray::hide_main_window();
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -324,7 +325,7 @@ impl MainWindow {
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
             let services = cx
-                .background_spawn(async { backend::list_services() })
+                .background_spawn(async { service_backend::list_services() })
                 .await;
             state
                 .update(cx, |state, cx| {
@@ -429,7 +430,9 @@ impl MainWindow {
         cx.spawn(async move |_this, cx| {
             let started = Instant::now();
             let results = cx
-                .background_spawn(async move { backend::execute_service_operation(operation) })
+                .background_spawn(
+                    async move { service_backend::execute_service_operation(operation) },
+                )
                 .await;
 
             // 原生后端可能在几毫秒内完成刷新；延长提示显示时间，确保用户能注意到反馈。
@@ -458,7 +461,7 @@ impl MainWindow {
                             ok,
                             message: message.clone(),
                         });
-                        crate::logging::log(&format!(
+                        crate::support::logging::log(&format!(
                             "{:?} {} -> {}",
                             history_action,
                             result.name,
@@ -523,7 +526,7 @@ impl MainWindow {
                         names
                             .into_iter()
                             .map(|name| {
-                                let status = backend::service_status(&name);
+                                let status = service_backend::service_status(&name);
                                 (name, status)
                             })
                             .collect::<Vec<_>>()
@@ -569,7 +572,7 @@ impl MainWindow {
         if self.state.read(cx).system_info_loading() {
             cx.spawn(async move |_this, cx| {
                 let result = cx
-                    .background_spawn(async { backend::fetch_system_info() })
+                    .background_spawn(async { system_info::fetch_system_info() })
                     .await;
                 state
                     .update(cx, |state, cx| {
@@ -584,7 +587,7 @@ impl MainWindow {
         } else if self.state.read(cx).processes_loading() {
             cx.spawn(async move |_this, cx| {
                 let result = cx
-                    .background_spawn(async { backend::list_processes() })
+                    .background_spawn(async { processes::list_processes() })
                     .await;
                 state
                     .update(cx, |state, cx| {
@@ -598,7 +601,7 @@ impl MainWindow {
             self.ensure_monitor_loop(cx);
         } else if self.state.read(cx).startup().loading {
             cx.spawn(async move |_this, cx| {
-                let result = cx.background_spawn(async { backend::list_startup() }).await;
+                let result = cx.background_spawn(async { startup::list_startup() }).await;
                 state
                     .update(cx, |state, cx| {
                         state.set_startup(result);
@@ -630,7 +633,7 @@ impl MainWindow {
                 break;
             }
             let result = cx
-                .background_spawn(async { backend::sample_metrics() })
+                .background_spawn(async { monitor::sample_metrics() })
                 .await;
             state
                 .update(cx, |state, cx| {
@@ -650,7 +653,7 @@ impl MainWindow {
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
             let result = cx
-                .background_spawn(async { backend::list_processes() })
+                .background_spawn(async { processes::list_processes() })
                 .await;
             state
                 .update(cx, |state, cx| {
@@ -681,14 +684,16 @@ impl MainWindow {
             let result = cx
                 .background_spawn(async move {
                     match selected {
-                        0 => backend::reset_navicat().map(|deleted| {
+                        0 => crate::features::cleanup::navicat::reset_navicat().map(|deleted| {
                             translations
                                 .script_result_cleanup
                                 .replace("{}", &deleted.to_string())
                         }),
-                        1 => backend::flush_dns(),
+                        1 => network::flush_dns(),
                         _ => match custom {
-                            Some((kind, command)) => backend::run_script(kind, &command),
+                            Some((kind, command)) => {
+                                crate::features::scripts::runtime::run_script(kind, &command)
+                            }
                             None => Ok(String::new()),
                         },
                     }

@@ -202,3 +202,13 @@ pub fn format_memory(bytes: u64) -> String {
     const MB: f64 = 1024.0 * 1024.0;
     format!("{:.1} MB", bytes as f64 / MB)
 }
+
+/// 枚举进程管理工具所需的运行中进程。
+pub fn list_processes() -> Result<Vec<ProcessInfo>, crate::shared::BackendError> {
+    Ok(list())
+}
+
+/// 根据 PID 结束进程；调用方必须沿用现有的二次确认流程。
+pub fn terminate_process(pid: u32) -> Result<(), crate::shared::BackendError> {
+    terminate(pid).map_err(crate::shared::BackendError::Command)
+}

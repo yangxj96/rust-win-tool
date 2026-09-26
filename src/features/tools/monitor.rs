@@ -176,3 +176,8 @@ pub fn format_rate(bytes_per_second: f64) -> String {
         format!("{:.2} MB/s", bytes_per_second / (KB * KB))
     }
 }
+
+/// 为实时监视器采集一份系统指标数据。
+pub fn sample_metrics() -> Result<Metrics, crate::shared::BackendError> {
+    Ok(sample())
+}

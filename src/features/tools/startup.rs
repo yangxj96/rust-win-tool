@@ -209,3 +209,17 @@ fn common_startup_dir() -> std::path::PathBuf {
         .unwrap_or_default();
     base.join(r"Microsoft\Windows\Start Menu\Programs\Startup")
 }
+
+/// 从当前用户和计算机范围内的受支持位置枚举启动项。
+pub fn list_startup() -> Result<Vec<StartupItem>, crate::shared::BackendError> {
+    Ok(list())
+}
+
+/// 在原有注册表或文件位置范围内启用或禁用一个受支持的启动项。
+pub fn set_startup_enabled(
+    location: StartupLocation,
+    value_name: &str,
+    enabled: bool,
+) -> Result<(), crate::shared::BackendError> {
+    set_enabled(location, value_name, enabled).map_err(crate::shared::BackendError::Command)
+}

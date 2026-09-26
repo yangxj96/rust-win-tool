@@ -118,3 +118,8 @@ mod platform {
         })
     }
 }
+
+/// 使用 `ipconfig` 清空 Windows DNS 解析器缓存。
+pub fn flush_dns() -> Result<String, crate::shared::BackendError> {
+    crate::features::scripts::runtime::run_command("ipconfig /flushdns")
+}

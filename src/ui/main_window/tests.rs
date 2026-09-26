@@ -64,12 +64,12 @@ fn service_detail_renders(cx: &mut TestAppContext) {
     let state = cx.new(|_| {
         let mut state = AppState::new();
         state.begin_service_detail("Demo");
-        state.set_service_detail(Ok(crate::service::ServiceDetails {
+        state.set_service_detail(Ok(crate::features::services::ServiceDetails {
             name: "Demo".into(),
             display_name: "Demo Service".into(),
             description: "A demo service".into(),
             status: "Running".into(),
-            start_type: crate::service::StartType::Automatic,
+            start_type: crate::features::services::StartType::Automatic,
             binary_path: r"C:\demo.exe".into(),
             account: "LocalSystem".into(),
             process_id: 1234,

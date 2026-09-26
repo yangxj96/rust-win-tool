@@ -4,7 +4,7 @@
 
 use super::shared::*;
 use super::*;
-use crate::cleanup as cleanup_backend;
+use crate::features::cleanup as cleanup_backend;
 
 impl MainWindow {
     pub(super) fn render_cleanup_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
@@ -301,7 +301,7 @@ impl MainWindow {
                     cx.notify();
                 })
                 .ok();
-            crate::logging::log(&format!(
+            crate::support::logging::log(&format!(
                 "cleanup freed {} bytes, removed {}, skipped {}",
                 report.freed_bytes, report.removed_files, report.skipped_files
             ));

@@ -3,6 +3,8 @@
 //! Win32 句柄通过包装类型确保及时释放；查询缓冲区使用按 `usize` 对齐的存储，
 //! 再转换为 Windows API 返回的结构体。
 
+pub mod operations;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,7 +77,7 @@ pub struct ServiceDetails {
 
 /// 服务后端错误。
 ///
-/// `Display` 文本保留界面错误映射器（`src/app.rs` 中的 `map_error`）识别的英文
+/// `Display` 文本保留界面错误映射器（`src/app/state.rs` 中的 `map_error`）识别的英文
 /// 关键词，确保替换 PowerShell 实现后用户看到的提示不变。
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
