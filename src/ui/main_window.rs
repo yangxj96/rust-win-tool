@@ -2809,50 +2809,6 @@ impl MainWindow {
                     .child(translations.status_refreshing)
             }));
 
-        let output = state.script_output().map(|text| {
-            components::card(colors)
-                .flex()
-                .flex_col()
-                .gap_2()
-                .w_full()
-                .h(px(216.))
-                .flex_shrink_0()
-                .p_4()
-                .child(components::card_title(translations.scripts_header, colors))
-                .child(
-                    div()
-                        .flex()
-                        .w_full()
-                        .flex_1()
-                        .min_h(px(0.))
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .w_full()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .min_h(px(0.))
-                                .id("script-output")
-                                .overflow_y_scroll()
-                                .track_scroll(&self.script_scroll)
-                                .on_scroll_wheel(cx.listener(Self::on_scrolled))
-                                .text_sm()
-                                .whitespace_normal()
-                                .text_color(components::color(colors.fg.default))
-                                .child(text.to_string()),
-                        )
-                        .child(self.render_scrollbar(
-                            &self.script_scroll,
-                            colors,
-                            cx,
-                            "script-scrollbar",
-                            "script-thumb",
-                        )),
-                )
-        });
-
         let custom_rows = state
             .custom_scripts()
             .iter()
@@ -2951,7 +2907,6 @@ impl MainWindow {
                             .children(custom_rows),
                     ),
             )
-            .children(output)
     }
 
     fn render_settings_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
@@ -3808,6 +3763,15 @@ impl MainWindow {
         cx.notify();
     }
 
+    fn close_script_output_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_state(cx, |state| state.close_script_output());
+    }
+
     fn clear_history_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.update_state(cx, |state| state.clear_history());
     }
@@ -4521,6 +4485,103 @@ impl MainWindow {
             )
     }
 
+    /// Modal that shows the output of the most recent script run. Closing it
+    /// leaves the script list unobstructed.
+    fn render_script_output(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let colors = state.theme_colors();
+        let text = state.script_output().unwrap_or_default().to_string();
+
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000099))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .w(px(620.))
+                    .max_h(px(560.))
+                    .p_5()
+                    .rounded_xl()
+                    .shadow_2xl()
+                    .bg(components::color(colors.bg.elevated))
+                    .border_1()
+                    .border_color(components::color(colors.border.default))
+                    .text_color(components::color(colors.fg.default))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .w_full()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(translations.script_output_title),
+                            )
+                            .child(
+                                components::button("✕", colors, components::ButtonVariant::Ghost)
+                                    .w(px(28.))
+                                    .h(px(28.))
+                                    .px_0()
+                                    .id("script-output-close-icon")
+                                    .on_click(cx.listener(Self::close_script_output_clicked)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .w_full()
+                            .flex_1()
+                            .min_h(px(0.))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .w_full()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .min_h(px(0.))
+                                    .id("script-output-body")
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.script_scroll)
+                                    .on_scroll_wheel(cx.listener(Self::on_scrolled))
+                                    .text_sm()
+                                    .whitespace_normal()
+                                    .text_color(components::color(colors.fg.default))
+                                    .child(text),
+                            )
+                            .child(self.render_scrollbar(
+                                &self.script_scroll,
+                                colors,
+                                cx,
+                                "script-scrollbar",
+                                "script-thumb",
+                            )),
+                    )
+                    .child(
+                        div().flex().justify_end().child(
+                            components::button(
+                                translations.dialog_close,
+                                colors,
+                                components::ButtonVariant::Secondary,
+                            )
+                            .id("script-output-close")
+                            .on_click(cx.listener(Self::close_script_output_clicked)),
+                        ),
+                    ),
+            )
+    }
+
     fn render_confirm_dialog(
         &self,
         state: &AppState,
@@ -4736,6 +4797,9 @@ impl Render for MainWindow {
         }
         if state.show_script_dialog() {
             content = content.child(self.render_add_script_dialog(window, state, cx));
+        }
+        if state.script_output().is_some() {
+            content = content.child(self.render_script_output(state, cx));
         }
         div()
             .size_full()

@@ -450,6 +450,11 @@ impl AppState {
             self.tool_detail_active = false;
             self.release_tool_data();
         }
+        if view != View::Scripts {
+            // The output popup belongs to the scripts page; drop it when the
+            // user navigates elsewhere so it cannot linger over other views.
+            self.script_output = None;
+        }
     }
 
     /// Drop tool-specific data so nothing keeps sampling while the user is
@@ -1558,6 +1563,10 @@ impl AppState {
 
     pub fn script_output(&self) -> Option<&str> {
         self.script_output.as_deref()
+    }
+
+    pub fn close_script_output(&mut self) {
+        self.script_output = None;
     }
 
     pub fn set_script_output(&mut self, result: Result<String, BackendError>) {
