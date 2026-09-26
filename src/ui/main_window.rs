@@ -3127,6 +3127,7 @@ impl MainWindow {
             .flex()
             .items_center()
             .justify_center()
+            .occlude()
             .bg(rgba(0x00000099))
             .child(
                 div()
@@ -3374,6 +3375,7 @@ impl MainWindow {
             .flex()
             .items_center()
             .justify_center()
+            .occlude()
             .bg(rgba(0x00000099))
             .child(
                 div()
@@ -4273,6 +4275,7 @@ impl MainWindow {
             .flex()
             .items_center()
             .justify_center()
+            .occlude()
             .bg(rgba(0x00000099))
             .child(
                 div()
@@ -4413,6 +4416,7 @@ impl MainWindow {
             .flex()
             .items_center()
             .justify_center()
+            .occlude()
             .bg(rgba(0x00000099))
             .child(
                 div()
@@ -4500,6 +4504,7 @@ impl MainWindow {
             .flex()
             .items_center()
             .justify_center()
+            .occlude()
             .bg(rgba(0x00000099))
             .child(
                 div()
@@ -4603,6 +4608,7 @@ impl MainWindow {
             .flex()
             .items_center()
             .justify_center()
+            .occlude()
             .bg(rgba(0x00000099))
             .child(
                 div()
