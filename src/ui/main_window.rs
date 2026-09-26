@@ -4232,6 +4232,18 @@ impl MainWindow {
         let translations = state.t();
         let colors = state.theme_colors();
         let name = state.service_detail_name().unwrap_or_default().to_string();
+        let display_name = state
+            .service_detail()
+            .map(|details| {
+                if details.display_name.trim().is_empty()
+                    || details.display_name == details.name
+                {
+                    details.name.clone()
+                } else {
+                    format!("{} ({})", details.display_name, details.name)
+                }
+            })
+            .unwrap_or_else(|| name.clone());
 
         let body: AnyElement = if state.service_detail_loading() {
             div()
@@ -4405,7 +4417,7 @@ impl MainWindow {
                                         div()
                                             .text_xs()
                                             .text_color(components::color(colors.fg.muted))
-                                            .child(name),
+                                            .child(display_name),
                                     ),
                             )
                             .child(

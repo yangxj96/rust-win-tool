@@ -85,16 +85,11 @@ pub enum ServiceError {
     Disabled,
     #[error("timeout")]
     Timeout,
+    #[cfg(not(windows))]
     #[error("unsupported platform")]
     UnsupportedPlatform,
     #[error("命令失败")]
     CommandFailed(String),
-    #[error("启动失败")]
-    StartFailed(String),
-    #[error("停止失败")]
-    StopFailed(String),
-    #[error("解析失败")]
-    ParseFailed(String),
 }
 
 pub fn load_managed_services(path: &std::path::Path) -> Vec<ManagedService> {
