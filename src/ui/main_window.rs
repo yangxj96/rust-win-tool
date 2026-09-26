@@ -50,6 +50,7 @@ pub struct MainWindow {
     search_focus: FocusHandle,
     service_search_focus: FocusHandle,
     net_host_focus: FocusHandle,
+    script_focus: FocusHandle,
     service_scroll: ScrollHandle,
     dialog_scroll: ScrollHandle,
     sysinfo_scroll: ScrollHandle,
@@ -84,6 +85,7 @@ enum TextTarget {
     Dialog,
     ServiceSearch,
     NetHost,
+    ScriptCommand,
 }
 
 /// Network diagnostic action.
@@ -120,6 +122,7 @@ impl MainWindow {
             search_focus: cx.focus_handle(),
             service_search_focus: cx.focus_handle(),
             net_host_focus: cx.focus_handle(),
+            script_focus: cx.focus_handle(),
             service_scroll: ScrollHandle::new(),
             dialog_scroll: ScrollHandle::new(),
             sysinfo_scroll: ScrollHandle::new(),
@@ -138,6 +141,8 @@ impl MainWindow {
             TextTarget::ServiceSearch
         } else if self.net_host_focus.is_focused(window) {
             TextTarget::NetHost
+        } else if self.script_focus.is_focused(window) {
+            TextTarget::ScriptCommand
         } else {
             TextTarget::Dialog
         }
@@ -156,6 +161,9 @@ impl MainWindow {
             }
             TextTarget::NetHost => {
                 self.update_state(cx, |state| state.net_host_backspace());
+            }
+            TextTarget::ScriptCommand => {
+                self.update_state(cx, |state| state.script_command_backspace());
             }
             TextTarget::Dialog => {
                 if self.state.read(cx).show_add_dialog() {
@@ -590,6 +598,14 @@ impl MainWindow {
             let state = self.state.read(cx);
             (state.scripts_selected(), state.t())
         };
+        let custom_command = if selected >= 2 {
+            self.state
+                .read(cx)
+                .custom_script_command(selected - 2)
+                .map(str::to_string)
+        } else {
+            None
+        };
         self.update_state(cx, |state| state.begin_script());
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
@@ -602,7 +618,10 @@ impl MainWindow {
                                 .replace("{}", &deleted.to_string())
                         }),
                         1 => backend::flush_dns(),
-                        _ => Ok(String::new()),
+                        _ => match custom_command {
+                            Some(command) => backend::run_command(&command),
+                            None => Ok(String::new()),
+                        },
                     }
                 })
                 .await;
@@ -2656,6 +2675,15 @@ impl MainWindow {
                 .id("script-run")
                 .on_click(cx.listener(Self::script_clicked)),
             )
+            .child(
+                components::button(
+                    translations.script_add,
+                    colors,
+                    components::ButtonVariant::Secondary,
+                )
+                .id("script-add")
+                .on_click(cx.listener(Self::add_script_clicked)),
+            )
             .children(state.script_running().then(|| {
                 div()
                     .text_sm()
@@ -2686,6 +2714,73 @@ impl MainWindow {
                 )
         });
 
+        let custom_rows = state
+            .custom_scripts()
+            .iter()
+            .enumerate()
+            .map(|(index, script)| {
+                let row_index = SCRIPTS.len() + index;
+                let selected = state.scripts_selected() == row_index;
+                components::card(colors)
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .w_full()
+                    .p_3()
+                    .cursor_pointer()
+                    .border_color(components::color(if selected {
+                        colors.brand.primary
+                    } else {
+                        colors.border.subtle
+                    }))
+                    .bg(components::color(if selected {
+                        colors.brand.soft
+                    } else {
+                        colors.bg.surface
+                    }))
+                    .id(("custom-script-row", index))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_state(cx, move |state| state.select_script(row_index))
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .flex_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(components::color(colors.fg.default))
+                                    .child(script.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(components::color(colors.fg.muted))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(script.command.clone()),
+                            ),
+                    )
+                    .child(
+                        components::button(
+                            translations.hint_delete,
+                            colors,
+                            components::ButtonVariant::Danger,
+                        )
+                        .h(px(26.))
+                        .px_2()
+                        .text_xs()
+                        .id(("custom-script-delete", index))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.update_state(cx, move |state| state.remove_custom_script(index))
+                        })),
+                    )
+            });
+
         div()
             .flex()
             .flex_col()
@@ -2694,6 +2789,18 @@ impl MainWindow {
             .p_6()
             .child(toolbar)
             .child(div().flex().flex_col().gap_3().w_full().children(rows))
+            .children(
+                (!state.custom_scripts().is_empty())
+                    .then(|| components::section_label(translations.script_custom, colors)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .w_full()
+                    .children(custom_rows),
+            )
             .children(output)
     }
 
@@ -2812,6 +2919,120 @@ impl MainWindow {
             .child(language_row)
             .child(theme_row)
             .child(logs_row)
+    }
+
+    fn render_add_script_dialog(
+        &self,
+        window: &Window,
+        state: &AppState,
+        cx: &Context<Self>,
+    ) -> Div {
+        let translations = state.t();
+        let colors = state.theme_colors();
+        let focused = self.script_focus.is_focused(window);
+
+        let input = {
+            let input_entity = cx.entity();
+            let input_focus = self.script_focus.clone();
+            canvas(
+                |_, _, _| (),
+                move |bounds, _, window, cx| {
+                    window.handle_input(
+                        &input_focus,
+                        ElementInputHandler::new(bounds, input_entity.clone()),
+                        cx,
+                    );
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
+        let field = components::search_field(
+            state.script_command(),
+            state.script_command_marked(),
+            translations.script_placeholder,
+            colors,
+            focused,
+        )
+        .relative()
+        .track_focus(&self.script_focus)
+        .cursor_text()
+        .focus(|style| style.border_color(components::color(colors.brand.primary)))
+        .id("script-command")
+        .on_click(cx.listener(Self::focus_script))
+        .child(input);
+
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000099))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .w(px(460.))
+                    .p_5()
+                    .rounded_xl()
+                    .shadow_2xl()
+                    .bg(components::color(colors.bg.elevated))
+                    .border_1()
+                    .border_color(components::color(colors.border.default))
+                    .text_color(components::color(colors.fg.default))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(translations.script_add_title),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .w_full()
+                            .child(
+                                div()
+                                    .w(px(56.))
+                                    .flex_shrink_0()
+                                    .text_sm()
+                                    .text_color(components::color(colors.fg.muted))
+                                    .child(translations.script_command_label),
+                            )
+                            .child(div().flex_1().min_w(px(0.)).child(field)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                components::button(
+                                    translations.dialog_hint_cancel,
+                                    colors,
+                                    components::ButtonVariant::Secondary,
+                                )
+                                .id("script-dialog-cancel")
+                                .on_click(cx.listener(Self::cancel_add_script_clicked)),
+                            )
+                            .child(
+                                components::button(
+                                    translations.dialog_hint_add,
+                                    colors,
+                                    components::ButtonVariant::Primary,
+                                )
+                                .id("script-dialog-add")
+                                .on_click(cx.listener(Self::confirm_add_script_clicked)),
+                            ),
+                    ),
+            )
     }
 
     fn render_add_dialog(&self, window: &Window, state: &AppState, cx: &Context<Self>) -> Div {
@@ -3167,6 +3388,34 @@ impl MainWindow {
 
     fn script_clicked(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         self.run_script(cx);
+    }
+
+    fn add_script_clicked(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_state(cx, |state| state.begin_add_script());
+        window.focus(&self.script_focus);
+    }
+
+    fn focus_script(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.script_focus);
+        cx.notify();
+    }
+
+    fn confirm_add_script_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_state(cx, |state| state.confirm_add_script());
+    }
+
+    fn cancel_add_script_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_state(cx, |state| state.close_add_script());
     }
 
     fn focus_search(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -4204,6 +4453,9 @@ impl Render for MainWindow {
         if self.pending_kill.is_some() {
             content = content.child(self.render_confirm_kill(state, cx));
         }
+        if state.show_script_dialog() {
+            content = content.child(self.render_add_script_dialog(window, state, cx));
+        }
         div()
             .size_full()
             .flex()
@@ -4228,6 +4480,7 @@ impl EntityInputHandler for MainWindow {
         let text = match target {
             TextTarget::ServiceSearch => state.service_search_text_range(range_utf16.clone()),
             TextTarget::NetHost => state.net_host_text_range(range_utf16.clone()),
+            TextTarget::ScriptCommand => state.script_command_text_range(range_utf16.clone()),
             TextTarget::Dialog => state.add_dialog_text_range(range_utf16.clone()),
         };
         *adjusted_range = Some(range_utf16);
@@ -4245,6 +4498,7 @@ impl EntityInputHandler for MainWindow {
         let cursor = match target {
             TextTarget::ServiceSearch => state.service_search_text_utf16_len(),
             TextTarget::NetHost => state.net_host_text_utf16_len(),
+            TextTarget::ScriptCommand => state.script_command_text_utf16_len(),
             TextTarget::Dialog => state.add_dialog_text_utf16_len(),
         };
         Some(UTF16Selection {
@@ -4263,6 +4517,7 @@ impl EntityInputHandler for MainWindow {
         match target {
             TextTarget::ServiceSearch => state.service_search_marked_range(),
             TextTarget::NetHost => state.net_host_marked_range(),
+            TextTarget::ScriptCommand => state.script_command_marked_range(),
             TextTarget::Dialog => state.add_dialog_marked_range(),
         }
     }
@@ -4272,6 +4527,7 @@ impl EntityInputHandler for MainWindow {
         self.update_state(cx, move |state| match target {
             TextTarget::ServiceSearch => state.service_search_unmark(),
             TextTarget::NetHost => state.net_host_unmark(),
+            TextTarget::ScriptCommand => state.script_command_unmark(),
             TextTarget::Dialog => state.add_dialog_unmark(),
         });
     }
@@ -4293,6 +4549,10 @@ impl EntityInputHandler for MainWindow {
             TextTarget::NetHost => match replacement_range {
                 Some(range) => state.net_host_replace_range(range, &text),
                 None => state.net_host_commit_text(&text),
+            },
+            TextTarget::ScriptCommand => match replacement_range {
+                Some(range) => state.script_command_replace_range(range, &text),
+                None => state.script_command_commit_text(&text),
             },
             TextTarget::Dialog => match replacement_range {
                 Some(range) => state.add_dialog_replace_range(range, &text),
@@ -4323,6 +4583,12 @@ impl EntityInputHandler for MainWindow {
                     state.net_host_replace_range(range, "");
                 }
                 state.net_host_set_marked(&text);
+            }
+            TextTarget::ScriptCommand => {
+                if let Some(range) = range_utf16 {
+                    state.script_command_replace_range(range, "");
+                }
+                state.script_command_set_marked(&text);
             }
             TextTarget::Dialog => {
                 if let Some(range) = range_utf16 {

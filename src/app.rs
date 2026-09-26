@@ -9,6 +9,7 @@ use crate::cleanup::{CleanupCategory, DeleteMode, Scan};
 use crate::i18n::{Language, Translations, EN, ZH};
 use crate::monitor::Metrics;
 use crate::process::ProcessInfo;
+use crate::scripts::CustomScript;
 use crate::startup::StartupItem;
 use crate::theme::{ThemeColors, DARK, LIGHT};
 
@@ -312,6 +313,10 @@ pub struct AppState {
     scripts_selected: usize,
     script_output: Option<String>,
     script_running: bool,
+    scripts_file: PathBuf,
+    custom_scripts: Vec<CustomScript>,
+    /// Command being entered in the "add script" dialog.
+    script_dialog: Option<SearchText>,
     tool_detail_active: bool,
     system_info: Option<SystemInfo>,
     system_info_loading: bool,
@@ -351,7 +356,9 @@ impl AppState {
 
         let data_file = app_dir.join("managed_services.json");
         let settings_file = app_dir.join("settings.json");
+        let scripts_file = app_dir.join("scripts.json");
         let managed_services = app_service::load_managed_services(&data_file);
+        let custom_scripts = crate::scripts::load(&scripts_file);
         let settings = load_settings(&settings_file);
         Self {
             current_view: View::Service,
@@ -367,6 +374,9 @@ impl AppState {
             scripts_selected: 0,
             script_output: None,
             script_running: false,
+            scripts_file,
+            custom_scripts,
+            script_dialog: None,
             tool_detail_active: false,
             system_info: None,
             system_info_loading: false,
@@ -1172,9 +1182,129 @@ impl AppState {
     }
 
     pub fn select_script(&mut self, index: usize) {
-        if index < SCRIPTS_COUNT {
+        if index < self.script_count() {
             self.scripts_selected = index;
         }
+    }
+
+    /// Number of script rows: built-ins followed by custom scripts.
+    pub fn script_count(&self) -> usize {
+        SCRIPTS_COUNT + self.custom_scripts.len()
+    }
+
+    pub fn custom_scripts(&self) -> &[CustomScript] {
+        &self.custom_scripts
+    }
+
+    pub fn custom_script_command(&self, index: usize) -> Option<&str> {
+        self.custom_scripts
+            .get(index)
+            .map(|script| script.command.as_str())
+    }
+
+    pub fn show_script_dialog(&self) -> bool {
+        self.script_dialog.is_some()
+    }
+
+    pub fn begin_add_script(&mut self) {
+        self.script_dialog = Some(SearchText::default());
+    }
+
+    pub fn close_add_script(&mut self) {
+        self.script_dialog = None;
+    }
+
+    pub fn script_command(&self) -> &str {
+        self.script_dialog
+            .as_ref()
+            .map(|dialog| dialog.text.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn script_command_marked(&self) -> &str {
+        self.script_dialog
+            .as_ref()
+            .map(|dialog| dialog.marked.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn script_command_text_utf16_len(&self) -> usize {
+        self.script_dialog
+            .as_ref()
+            .map(SearchText::utf16_len)
+            .unwrap_or(0)
+    }
+
+    pub fn script_command_marked_range(&self) -> Option<Range<usize>> {
+        self.script_dialog
+            .as_ref()
+            .and_then(SearchText::marked_range)
+    }
+
+    pub fn script_command_text_range(&self, range: Range<usize>) -> String {
+        self.script_dialog
+            .as_ref()
+            .map(|dialog| dialog.text_range(range))
+            .unwrap_or_default()
+    }
+
+    pub fn script_command_replace_range(&mut self, range: Range<usize>, text: &str) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.replace_range(range, text);
+        }
+    }
+
+    pub fn script_command_commit_text(&mut self, text: &str) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.commit(text);
+        }
+    }
+
+    pub fn script_command_set_marked(&mut self, text: &str) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.set_marked(text);
+        }
+    }
+
+    pub fn script_command_unmark(&mut self) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.unmark();
+        }
+    }
+
+    pub fn script_command_backspace(&mut self) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.backspace();
+        }
+    }
+
+    /// Add the typed command as a custom script (name derived from the command).
+    pub fn confirm_add_script(&mut self) {
+        let Some(dialog) = self.script_dialog.take() else {
+            return;
+        };
+        let command = dialog.full_text().trim().to_string();
+        if command.is_empty() {
+            return;
+        }
+        let name = command
+            .split_whitespace()
+            .next()
+            .unwrap_or(&command)
+            .to_string();
+        self.custom_scripts.push(CustomScript { name, command });
+        crate::scripts::save(&self.scripts_file, &self.custom_scripts);
+    }
+
+    pub fn remove_custom_script(&mut self, index: usize) {
+        if index >= self.custom_scripts.len() {
+            return;
+        }
+        self.custom_scripts.remove(index);
+        if self.scripts_selected >= self.script_count() {
+            self.scripts_selected = 0;
+        }
+        crate::scripts::save(&self.scripts_file, &self.custom_scripts);
     }
 
     pub fn tool_detail_active(&self) -> bool {
