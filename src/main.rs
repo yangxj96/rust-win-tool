@@ -13,6 +13,7 @@ mod logging;
 mod monitor;
 mod network;
 mod process;
+mod startup;
 mod theme;
 mod tray;
 mod ui;

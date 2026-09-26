@@ -15,15 +15,17 @@ use crate::app::{
 use crate::backend::{self, ServiceOperation};
 use crate::cleanup::{self, CleanupCategory, DeleteMode};
 use crate::i18n::Language;
+use crate::startup::StartupLocation;
 use crate::theme::{StatusColors, ThemeColors};
 use crate::ui::{components, input};
 use app_service::StartType;
 
-const TOOLS: [(&str, &str); 4] = [
+const TOOLS: [(&str, &str); 5] = [
     ("tool_sysinfo", "tool_sysinfo_desc"),
     ("tool_processes", "tool_processes_desc"),
     ("tool_monitor", "tool_monitor_desc"),
     ("tool_network", "tool_network_desc"),
+    ("tool_startup", "tool_startup_desc"),
 ];
 
 const SERVICE_NAME_COLUMN_WIDTH: f32 = 180.;
@@ -519,6 +521,17 @@ impl MainWindow {
             .detach();
         } else if self.state.read(cx).monitor_active() {
             self.ensure_monitor_loop(cx);
+        } else if self.state.read(cx).startup().loading {
+            cx.spawn(async move |_this, cx| {
+                let result = cx.background_spawn(async { backend::list_startup() }).await;
+                state
+                    .update(cx, |state, cx| {
+                        state.set_startup(result);
+                        cx.notify();
+                    })
+                    .ok();
+            })
+            .detach();
         }
     }
 
@@ -1365,6 +1378,7 @@ impl MainWindow {
                 1 => self.render_process_list(state, cx),
                 2 => self.render_monitor(state, cx),
                 3 => self.render_network(window, state, cx),
+                4 => self.render_startup(state, cx),
                 _ => self.render_system_info(state, cx),
             };
         }
@@ -1850,6 +1864,198 @@ impl MainWindow {
             .child(port_row)
             .child(actions)
             .child(result_card)
+    }
+
+    fn render_startup(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let colors = state.theme_colors();
+        let startup = state.startup();
+
+        let toolbar = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .w_full()
+            .child(
+                components::button(
+                    translations.sysinfo_back,
+                    colors,
+                    components::ButtonVariant::Secondary,
+                )
+                .id("startup-back")
+                .on_click(cx.listener(|this, _event, _window, cx| {
+                    this.update_state(cx, |state| state.close_tool_detail());
+                })),
+            )
+            .child(
+                components::button(
+                    translations.hint_refresh,
+                    colors,
+                    components::ButtonVariant::Secondary,
+                )
+                .id("startup-refresh")
+                .on_click(cx.listener(Self::refresh_startup_clicked)),
+            );
+
+        let body: AnyElement = if startup.loading {
+            div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_color(components::color(colors.fg.muted))
+                .child(translations.status_refreshing)
+                .into_any_element()
+        } else if let Some(error) = startup.error.as_deref() {
+            div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_color(components::color(colors.danger.text))
+                .child(error.to_string())
+                .into_any_element()
+        } else if startup.items.is_empty() {
+            div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_color(components::color(colors.fg.muted))
+                .child(translations.startup_empty)
+                .into_any_element()
+        } else {
+            let header = div()
+                .flex()
+                .items_center()
+                .w_full()
+                .h(px(32.))
+                .px_3()
+                .bg(components::color(colors.bg.muted))
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(components::color(colors.fg.muted))
+                .child(div().flex_1().child(translations.startup_name))
+                .child(div().w(px(170.)).child(translations.startup_source))
+                .child(div().w(px(80.)).child(translations.col_status))
+                .child(div().w(px(84.)));
+
+            let rows = startup.items.iter().enumerate().map(|(index, item)| {
+                let location = item.location;
+                let value_name = item.value_name.clone();
+                let enabled = item.enabled;
+                let state_color = if enabled {
+                    colors.success.text
+                } else {
+                    colors.fg.muted
+                };
+                let toggle = if enabled {
+                    components::button(
+                        translations.startup_disable,
+                        colors,
+                        components::ButtonVariant::Danger,
+                    )
+                } else {
+                    components::button(
+                        translations.startup_enable,
+                        colors,
+                        components::ButtonVariant::Secondary,
+                    )
+                };
+                div()
+                    .flex()
+                    .items_center()
+                    .w_full()
+                    .min_h(px(44.))
+                    .px_3()
+                    .border_b_1()
+                    .border_color(components::color(colors.border.subtle))
+                    .text_sm()
+                    .text_color(components::color(colors.fg.default))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .flex_1()
+                            .child(
+                                div()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(item.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(components::color(colors.fg.subtle))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(item.command.clone()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w(px(170.))
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(components::color(colors.fg.muted))
+                            .child(startup_source_label(location, translations)),
+                    )
+                    .child(
+                        div()
+                            .w(px(80.))
+                            .flex_shrink_0()
+                            .text_color(components::color(state_color))
+                            .child(if enabled {
+                                translations.startup_enabled
+                            } else {
+                                translations.startup_disabled
+                            }),
+                    )
+                    .child(
+                        div().w(px(84.)).flex_shrink_0().child(
+                            toggle
+                                .h(px(26.))
+                                .px_2()
+                                .text_xs()
+                                .id(("startup-toggle", index))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.toggle_startup(location, value_name.clone(), !enabled, cx)
+                                })),
+                        ),
+                    )
+            });
+
+            components::card(colors)
+                .flex()
+                .flex_col()
+                .w_full()
+                .flex_1()
+                .overflow_hidden()
+                .child(header)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .w_full()
+                        .flex_1()
+                        .id("startup-list")
+                        .overflow_y_scroll()
+                        .children(rows),
+                )
+                .into_any_element()
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .size_full()
+            .p_6()
+            .child(toolbar)
+            .child(body)
     }
 
     fn render_process_list(&self, state: &AppState, cx: &Context<Self>) -> Div {
@@ -2807,6 +3013,49 @@ impl MainWindow {
         cx: &mut Context<Self>,
     ) {
         self.refresh_processes(cx);
+    }
+
+    fn refresh_startup_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.update_state(cx, |state| state.begin_startup_refresh());
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let result = cx.background_spawn(async { backend::list_startup() }).await;
+            state
+                .update(cx, |state, cx| {
+                    state.set_startup(result);
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn toggle_startup(
+        &mut self,
+        location: StartupLocation,
+        value_name: String,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_spawn(async move {
+                    backend::set_startup_enabled(location, &value_name, enabled)
+                })
+                .await;
+            let list = cx.background_spawn(async { backend::list_startup() }).await;
+            state
+                .update(cx, |state, cx| {
+                    state.set_startup(list);
+                    if let Err(error) = result {
+                        state.set_refresh_notice(error.to_string());
+                    }
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
     }
 
     fn confirm_kill_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -4139,6 +4388,18 @@ fn status_colors(status: ServiceStatus, colors: &ThemeColors) -> &StatusColors {
     }
 }
 
+fn startup_source_label(
+    location: StartupLocation,
+    translations: &crate::i18n::Translations,
+) -> &'static str {
+    match location {
+        StartupLocation::RegistryHkcu => translations.startup_src_hkcu,
+        StartupLocation::RegistryHklm => translations.startup_src_hklm,
+        StartupLocation::FolderUser => translations.startup_src_user,
+        StartupLocation::FolderCommon => translations.startup_src_common,
+    }
+}
+
 fn net_port_id(port: u16) -> &'static str {
     match port {
         80 => "net-port-80",
@@ -4225,6 +4486,8 @@ fn tool_text(translations: &crate::i18n::Translations, key: &str) -> &'static st
         "tool_monitor_desc" => translations.tool_monitor_desc,
         "tool_network" => translations.tool_network,
         "tool_network_desc" => translations.tool_network_desc,
+        "tool_startup" => translations.tool_startup,
+        "tool_startup_desc" => translations.tool_startup_desc,
         _ => "",
     }
 }
@@ -4342,10 +4605,11 @@ mod tests {
 
     #[test]
     fn tools_catalog_lists_all_tools() {
-        assert_eq!(TOOLS.len(), 4);
+        assert_eq!(TOOLS.len(), 5);
         assert_eq!(TOOLS[0], ("tool_sysinfo", "tool_sysinfo_desc"));
         assert_eq!(TOOLS[1], ("tool_processes", "tool_processes_desc"));
         assert_eq!(TOOLS[2], ("tool_monitor", "tool_monitor_desc"));
         assert_eq!(TOOLS[3], ("tool_network", "tool_network_desc"));
+        assert_eq!(TOOLS[4], ("tool_startup", "tool_startup_desc"));
     }
 }

@@ -90,6 +90,18 @@ pub fn sample_metrics() -> Result<crate::monitor::Metrics, BackendError> {
     Ok(crate::monitor::sample())
 }
 
+pub fn list_startup() -> Result<Vec<crate::startup::StartupItem>, BackendError> {
+    Ok(crate::startup::list())
+}
+
+pub fn set_startup_enabled(
+    location: crate::startup::StartupLocation,
+    value_name: &str,
+    enabled: bool,
+) -> Result<(), BackendError> {
+    crate::startup::set_enabled(location, value_name, enabled).map_err(BackendError::Command)
+}
+
 #[derive(Debug, Clone)]
 pub enum ServiceOperation {
     Start(String),

@@ -9,11 +9,12 @@ use crate::cleanup::{CleanupCategory, DeleteMode, Scan};
 use crate::i18n::{Language, Translations, EN, ZH};
 use crate::monitor::Metrics;
 use crate::process::ProcessInfo;
+use crate::startup::StartupItem;
 use crate::theme::{ThemeColors, DARK, LIGHT};
 
 pub use crate::backend::SystemInfo;
 
-const TOOLS_COUNT: usize = 4;
+const TOOLS_COUNT: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
@@ -236,6 +237,14 @@ pub struct CleanupRow {
     pub scan: Option<Scan>,
 }
 
+/// Startup items page state.
+#[derive(Default)]
+pub struct StartupState {
+    pub items: Vec<StartupItem>,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
 /// Network diagnostics page state.
 #[derive(Default)]
 pub struct NetState {
@@ -324,6 +333,7 @@ pub struct AppState {
     process_sort: ProcessSort,
     monitor: MonitorState,
     network: NetState,
+    startup: StartupState,
     /// Transient message shown after a refresh completes.
     refresh_notice: Option<String>,
 }
@@ -379,6 +389,7 @@ impl AppState {
                 result: None,
                 loading: false,
             },
+            startup: StartupState::default(),
             refresh_notice: None,
         }
     }
@@ -805,6 +816,31 @@ impl AppState {
         self.operation_state = OperationState::Idle;
     }
 
+    pub fn startup(&self) -> &StartupState {
+        &self.startup
+    }
+
+    pub fn begin_startup_refresh(&mut self) {
+        self.startup.loading = true;
+        self.startup.error = None;
+        self.operation_state = OperationState::LoadingSystemInfo;
+    }
+
+    pub fn set_startup(&mut self, result: Result<Vec<StartupItem>, BackendError>) {
+        self.startup.loading = false;
+        match result {
+            Ok(items) => {
+                self.startup.items = items;
+                self.startup.error = None;
+                self.operation_state = OperationState::Idle;
+            }
+            Err(error) => {
+                self.startup.error = Some(map_error(&error, self.language));
+                self.operation_state = OperationState::Error;
+            }
+        }
+    }
+
     /// Process list ordered by the current sort setting.
     pub fn sorted_processes(&self) -> Vec<&ProcessInfo> {
         let mut list: Vec<&ProcessInfo> = self.processes.iter().collect();
@@ -1154,6 +1190,11 @@ impl AppState {
                 self.monitor.active = true;
             }
             3 => {}
+            4 => {
+                self.startup.loading = true;
+                self.startup.error = None;
+                self.operation_state = OperationState::LoadingSystemInfo;
+            }
             _ => {}
         }
         true
@@ -1357,7 +1398,7 @@ mod tests {
     fn tools_are_selectable_up_to_the_catalog_size() {
         let mut state = AppState::new();
 
-        state.select_tool(4);
+        state.select_tool(5);
         assert_eq!(state.tools_selected(), 0);
 
         state.select_tool(2);
