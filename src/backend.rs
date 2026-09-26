@@ -78,6 +78,14 @@ pub fn import_managed_services(path: &Path) -> Result<Vec<ManagedService>, Backe
     serde_json::from_str(&text).map_err(|error| BackendError::Parse(error.to_string()))
 }
 
+pub fn list_processes() -> Result<Vec<crate::process::ProcessInfo>, BackendError> {
+    Ok(crate::process::list())
+}
+
+pub fn terminate_process(pid: u32) -> Result<(), BackendError> {
+    crate::process::terminate(pid).map_err(BackendError::Command)
+}
+
 #[derive(Debug, Clone)]
 pub enum ServiceOperation {
     Start(String),

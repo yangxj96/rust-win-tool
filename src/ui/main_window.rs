@@ -9,8 +9,8 @@ use gpui::{
 use std::time::{Duration, Instant};
 
 use crate::app::{
-    AppState, HistoryAction, HistoryEntry, OperationState, PendingAction, ServiceFilter,
-    ServiceSort, ServiceStatus, Theme, View,
+    AppState, HistoryAction, HistoryEntry, OperationState, PendingAction, ProcessSort,
+    ServiceFilter, ServiceSort, ServiceStatus, Theme, View,
 };
 use crate::backend::{self, ServiceOperation};
 use crate::cleanup::{self, CleanupCategory, DeleteMode};
@@ -19,7 +19,10 @@ use crate::theme::{StatusColors, ThemeColors};
 use crate::ui::{components, input};
 use app_service::StartType;
 
-const TOOLS: [(&str, &str); 1] = [("tool_sysinfo", "tool_sysinfo_desc")];
+const TOOLS: [(&str, &str); 2] = [
+    ("tool_sysinfo", "tool_sysinfo_desc"),
+    ("tool_processes", "tool_processes_desc"),
+];
 
 const SERVICE_NAME_COLUMN_WIDTH: f32 = 180.;
 const SERVICE_DISPLAY_COLUMN_WIDTH: f32 = 200.;
@@ -47,6 +50,8 @@ pub struct MainWindow {
     pending_empty_bin: bool,
     /// Session operation history overlay.
     history_open: bool,
+    /// Process awaiting termination confirmation: (pid, name).
+    pending_kill: Option<(u32, String)>,
     /// Whether a first refresh has already happened, so the launch refresh does
     /// not show the completion notice.
     refresh_notice_ready: bool,
@@ -93,6 +98,7 @@ impl MainWindow {
             pending_clean: false,
             pending_empty_bin: false,
             history_open: false,
+            pending_kill: None,
             refresh_notice_ready: false,
         }
     }
@@ -438,8 +444,11 @@ impl MainWindow {
             cx.notify();
             opened
         });
-        if opened && self.state.read(cx).system_info_loading() {
-            let state = self.state.clone();
+        if !opened {
+            return;
+        }
+        let state = self.state.clone();
+        if self.state.read(cx).system_info_loading() {
             cx.spawn(async move |_this, cx| {
                 let result = cx
                     .background_spawn(async { backend::fetch_system_info() })
@@ -454,7 +463,37 @@ impl MainWindow {
                 state.update(cx, |_state, cx| cx.notify()).ok();
             })
             .detach();
+        } else if self.state.read(cx).processes_loading() {
+            cx.spawn(async move |_this, cx| {
+                let result = cx
+                    .background_spawn(async { backend::list_processes() })
+                    .await;
+                state
+                    .update(cx, |state, cx| {
+                        state.set_processes(result);
+                        cx.notify();
+                    })
+                    .ok();
+            })
+            .detach();
         }
+    }
+
+    fn refresh_processes(&mut self, cx: &mut Context<Self>) {
+        self.update_state(cx, |state| state.begin_process_refresh());
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_spawn(async { backend::list_processes() })
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    state.set_processes(result);
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
     }
 
     fn run_script(&mut self, cx: &mut Context<Self>) {
@@ -1251,7 +1290,10 @@ impl MainWindow {
 
     fn render_tools_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
         if state.tool_detail_active() {
-            return self.render_system_info(state, cx);
+            return match state.tools_selected() {
+                1 => self.render_process_list(state, cx),
+                _ => self.render_system_info(state, cx),
+            };
         }
         let translations = state.t();
         let colors = state.theme_colors();
@@ -1281,9 +1323,7 @@ impl MainWindow {
                     .id(("tool-row", index))
                     .on_click(cx.listener(move |this, event, window, cx| {
                         this.select_tool(index, event, window, cx);
-                        if index == 0 {
-                            this.open_tool(cx);
-                        }
+                        this.open_tool(cx);
                     }))
                     .child(
                         div()
@@ -1341,6 +1381,216 @@ impl MainWindow {
                 .id("tool-list")
                 .overflow_y_scroll(),
         )
+    }
+
+    fn render_process_list(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let colors = state.theme_colors();
+        let sort = state.process_sort();
+
+        let sort_control = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                segment(
+                    translations.proc_sort_memory,
+                    sort == ProcessSort::Memory,
+                    colors,
+                    "proc-sort-memory",
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_state(cx, |state| state.set_process_sort(ProcessSort::Memory))
+                })),
+            )
+            .child(
+                segment(
+                    translations.proc_sort_name,
+                    sort == ProcessSort::Name,
+                    colors,
+                    "proc-sort-name",
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_state(cx, |state| state.set_process_sort(ProcessSort::Name))
+                })),
+            )
+            .child(
+                segment(
+                    translations.proc_sort_pid,
+                    sort == ProcessSort::Pid,
+                    colors,
+                    "proc-sort-pid",
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.update_state(cx, |state| state.set_process_sort(ProcessSort::Pid))
+                })),
+            );
+
+        let toolbar = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .w_full()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        components::button(
+                            translations.sysinfo_back,
+                            colors,
+                            components::ButtonVariant::Secondary,
+                        )
+                        .id("process-back")
+                        .on_click(cx.listener(
+                            |this, _event, _window, cx| {
+                                this.update_state(cx, |state| state.close_tool_detail());
+                            },
+                        )),
+                    )
+                    .child(
+                        components::button(
+                            translations.hint_refresh,
+                            colors,
+                            components::ButtonVariant::Secondary,
+                        )
+                        .id("process-refresh")
+                        .on_click(cx.listener(Self::refresh_processes_clicked)),
+                    ),
+            )
+            .child(sort_control);
+
+        let body: AnyElement = if state.processes_loading() {
+            div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_color(components::color(colors.fg.muted))
+                .child(translations.status_refreshing)
+                .into_any_element()
+        } else if let Some(error) = state.processes_error() {
+            div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_color(components::color(colors.danger.text))
+                .child(error.to_string())
+                .into_any_element()
+        } else if state.processes().is_empty() {
+            div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_color(components::color(colors.fg.muted))
+                .child(translations.proc_empty)
+                .into_any_element()
+        } else {
+            let header = div()
+                .flex()
+                .items_center()
+                .w_full()
+                .h(px(32.))
+                .px_3()
+                .bg(components::color(colors.bg.muted))
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(components::color(colors.fg.muted))
+                .child(div().w(px(90.)).child(translations.proc_pid))
+                .child(div().flex_1().child(translations.proc_name))
+                .child(div().w(px(110.)).child(translations.proc_memory))
+                .child(div().w(px(80.)).child(translations.proc_cpu))
+                .child(div().w(px(72.)));
+
+            let rows = state.sorted_processes().into_iter().map(|process| {
+                let pid = process.pid;
+                let name = process.name.clone();
+                div()
+                    .flex()
+                    .items_center()
+                    .w_full()
+                    .min_h(px(40.))
+                    .px_3()
+                    .border_b_1()
+                    .border_color(components::color(colors.border.subtle))
+                    .text_sm()
+                    .text_color(components::color(colors.fg.default))
+                    .child(
+                        div()
+                            .w(px(90.))
+                            .text_color(components::color(colors.fg.muted))
+                            .child(pid.to_string()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(name.clone()),
+                    )
+                    .child(
+                        div()
+                            .w(px(110.))
+                            .child(crate::process::format_memory(process.memory_bytes)),
+                    )
+                    .child(
+                        div()
+                            .w(px(80.))
+                            .child(format!("{:.1}%", process.cpu_percent)),
+                    )
+                    .child(
+                        div().w(px(72.)).child(
+                            components::button(
+                                translations.proc_end,
+                                colors,
+                                components::ButtonVariant::Danger,
+                            )
+                            .h(px(26.))
+                            .px_2()
+                            .text_xs()
+                            .id(("proc-end", pid))
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.pending_kill = Some((pid, name.clone()));
+                                    cx.notify();
+                                },
+                            )),
+                        ),
+                    )
+            });
+
+            components::card(colors)
+                .flex()
+                .flex_col()
+                .w_full()
+                .flex_1()
+                .overflow_hidden()
+                .child(header)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .w_full()
+                        .flex_1()
+                        .id("process-list")
+                        .overflow_y_scroll()
+                        .children(rows),
+                )
+                .into_any_element()
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .size_full()
+            .p_6()
+            .child(toolbar)
+            .child(body)
     }
 
     fn render_system_info(&self, state: &AppState, cx: &Context<Self>) -> Div {
@@ -2079,6 +2329,45 @@ impl MainWindow {
             state.update(cx, |_state, cx| cx.notify()).ok();
         })
         .detach();
+    }
+
+    fn refresh_processes_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_processes(cx);
+    }
+
+    fn confirm_kill_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let Some((pid, _name)) = self.pending_kill.take() else {
+            return;
+        };
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_spawn(async move { backend::terminate_process(pid) })
+                .await;
+            let list = cx
+                .background_spawn(async { backend::list_processes() })
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    state.set_processes(list);
+                    if let Err(error) = result {
+                        state.set_refresh_notice(error.to_string());
+                    }
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn cancel_kill_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.pending_kill = None;
+        cx.notify();
     }
 
     fn script_clicked(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
@@ -2906,6 +3195,29 @@ impl MainWindow {
             )
     }
 
+    fn render_confirm_kill(&self, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let (pid, name) = self.pending_kill.clone().unwrap_or((0, String::new()));
+        let message = translations
+            .proc_confirm_message
+            .replace("{}", &name)
+            .replace("{}", &pid.to_string());
+        self.render_confirm_dialog(
+            state,
+            cx,
+            ConfirmDialog {
+                title: translations.proc_confirm_title,
+                message,
+                ok_label: translations.proc_end,
+                ok_id: "confirm-kill-ok",
+                cancel_id: "confirm-kill-cancel",
+                danger: true,
+                on_ok: Self::confirm_kill_clicked,
+                on_cancel: Self::cancel_kill_clicked,
+            },
+        )
+    }
+
     fn render_confirm_delete(&self, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
         let name = self.pending_delete.clone().unwrap_or_default();
@@ -3020,6 +3332,9 @@ impl Render for MainWindow {
         }
         if self.history_open {
             content = content.child(self.render_history(state, cx));
+        }
+        if self.pending_kill.is_some() {
+            content = content.child(self.render_confirm_kill(state, cx));
         }
         div()
             .size_full()
@@ -3343,6 +3658,8 @@ fn tool_text(translations: &crate::i18n::Translations, key: &str) -> &'static st
     match key {
         "tool_sysinfo" => translations.tool_sysinfo,
         "tool_sysinfo_desc" => translations.tool_sysinfo_desc,
+        "tool_processes" => translations.tool_processes,
+        "tool_processes_desc" => translations.tool_processes_desc,
         _ => "",
     }
 }
@@ -3459,8 +3776,9 @@ mod tests {
     }
 
     #[test]
-    fn tools_catalog_contains_only_system_info() {
-        assert_eq!(TOOLS.len(), 1);
+    fn tools_catalog_lists_system_info_and_processes() {
+        assert_eq!(TOOLS.len(), 2);
         assert_eq!(TOOLS[0], ("tool_sysinfo", "tool_sysinfo_desc"));
+        assert_eq!(TOOLS[1], ("tool_processes", "tool_processes_desc"));
     }
 }

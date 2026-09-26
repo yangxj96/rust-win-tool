@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 use crate::backend::BackendError;
 use crate::cleanup::{CleanupCategory, DeleteMode, Scan};
 use crate::i18n::{Language, Translations, EN, ZH};
+use crate::process::ProcessInfo;
 use crate::theme::{ThemeColors, DARK, LIGHT};
 
 pub use crate::backend::SystemInfo;
 
-const TOOLS_COUNT: usize = 1;
+const TOOLS_COUNT: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
@@ -183,6 +184,14 @@ impl ServiceSort {
     }
 }
 
+/// Ordering of the process list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessSort {
+    Memory,
+    Name,
+    Pid,
+}
+
 /// A user operation recorded for the session history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryAction {
@@ -287,6 +296,11 @@ pub struct AppState {
     service_detail: Option<ServiceDetails>,
     service_detail_loading: bool,
     service_detail_error: Option<String>,
+    /// Process manager state.
+    processes: Vec<ProcessInfo>,
+    processes_loading: bool,
+    processes_error: Option<String>,
+    process_sort: ProcessSort,
     /// Transient message shown after a refresh completes.
     refresh_notice: Option<String>,
 }
@@ -331,6 +345,10 @@ impl AppState {
             service_detail: None,
             service_detail_loading: false,
             service_detail_error: None,
+            processes: Vec::new(),
+            processes_loading: false,
+            processes_error: None,
+            process_sort: ProcessSort::Memory,
             refresh_notice: None,
         }
     }
@@ -439,12 +457,8 @@ impl AppState {
 
         match self.service_sort {
             ServiceSort::Manual => {}
-            ServiceSort::Name => indices.sort_by(|&a, &b| {
-                self.managed_services[a]
-                    .display_name
-                    .to_lowercase()
-                    .cmp(&self.managed_services[b].display_name.to_lowercase())
-            }),
+            ServiceSort::Name => indices
+                .sort_by_key(|&index| self.managed_services[index].display_name.to_lowercase()),
             ServiceSort::Status => indices.sort_by_key(|&index| {
                 let service = &self.managed_services[index];
                 (
@@ -626,6 +640,60 @@ impl AppState {
 
     pub fn set_service_detail_error(&mut self, error: &BackendError) {
         self.service_detail_error = Some(map_error(error, self.language));
+    }
+
+    pub fn processes(&self) -> &[ProcessInfo] {
+        &self.processes
+    }
+
+    pub fn processes_loading(&self) -> bool {
+        self.processes_loading
+    }
+
+    pub fn processes_error(&self) -> Option<&str> {
+        self.processes_error.as_deref()
+    }
+
+    pub fn process_sort(&self) -> ProcessSort {
+        self.process_sort
+    }
+
+    pub fn set_process_sort(&mut self, sort: ProcessSort) {
+        self.process_sort = sort;
+    }
+
+    pub fn begin_process_refresh(&mut self) {
+        self.processes_loading = true;
+        self.processes_error = None;
+        self.operation_state = OperationState::LoadingSystemInfo;
+    }
+
+    pub fn set_processes(&mut self, result: Result<Vec<ProcessInfo>, BackendError>) {
+        self.processes_loading = false;
+        match result {
+            Ok(processes) => {
+                self.processes = processes;
+                self.processes_error = None;
+                self.operation_state = OperationState::Idle;
+            }
+            Err(error) => {
+                self.processes_error = Some(map_error(&error, self.language));
+                self.operation_state = OperationState::Error;
+            }
+        }
+    }
+
+    /// Process list ordered by the current sort setting.
+    pub fn sorted_processes(&self) -> Vec<&ProcessInfo> {
+        let mut list: Vec<&ProcessInfo> = self.processes.iter().collect();
+        match self.process_sort {
+            ProcessSort::Memory => {
+                list.sort_by_key(|process| std::cmp::Reverse(process.memory_bytes))
+            }
+            ProcessSort::Name => list.sort_by_key(|process| process.name.to_lowercase()),
+            ProcessSort::Pid => list.sort_by_key(|process| process.pid),
+        }
+        list
     }
 
     pub fn request_refresh(&mut self) -> PendingAction {
@@ -947,13 +1015,20 @@ impl AppState {
     }
 
     pub fn open_tool_detail(&mut self) -> bool {
-        if self.tools_selected != 0 {
-            return false;
-        }
         self.tool_detail_active = true;
-        if self.system_info.is_none() {
-            self.system_info_loading = true;
-            self.operation_state = OperationState::LoadingSystemInfo;
+        match self.tools_selected {
+            0 => {
+                if self.system_info.is_none() {
+                    self.system_info_loading = true;
+                    self.operation_state = OperationState::LoadingSystemInfo;
+                }
+            }
+            1 => {
+                self.processes_loading = true;
+                self.processes_error = None;
+                self.operation_state = OperationState::LoadingSystemInfo;
+            }
+            _ => {}
         }
         true
     }
@@ -1152,13 +1227,16 @@ mod tests {
     }
 
     #[test]
-    fn only_system_tool_can_be_selected_and_opened() {
+    fn tools_are_selectable_up_to_the_catalog_size() {
         let mut state = AppState::new();
 
-        state.select_tool(1);
-
+        state.select_tool(2);
         assert_eq!(state.tools_selected(), 0);
+
+        state.select_tool(1);
+        assert_eq!(state.tools_selected(), 1);
         assert!(state.open_tool_detail());
+        assert!(state.tool_detail_active());
     }
 
     #[test]
