@@ -1,6 +1,13 @@
+//! Native Windows Service Control Manager access and portable service models.
+//!
+//! Win32 handles are wrapped for deterministic release, and pointer-backed
+//! query buffers remain aligned as `usize` storage before interpreting API
+//! structures.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Service fields retained in the backward-compatible service JSON file.
 pub struct ServiceInfo {
     pub name: String,
     pub display_name: String,
@@ -11,6 +18,7 @@ pub struct ServiceInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// User-managed service entry persisted by the application.
 pub struct ManagedService {
     pub name: String,
     pub display_name: String,
@@ -28,6 +36,7 @@ pub enum StartType {
 }
 
 impl StartType {
+    /// Convert to the numeric value expected by the Service Control Manager.
     pub fn code(self) -> u32 {
         match self {
             Self::Automatic => 2,
@@ -37,6 +46,7 @@ impl StartType {
         }
     }
 
+    /// Map a Service Control Manager startup value to its typed UI value.
     pub fn from_code(code: u32) -> Self {
         match code {
             2 => Self::Automatic,
@@ -92,6 +102,7 @@ pub enum ServiceError {
     CommandFailed(String),
 }
 
+/// Load the legacy-compatible managed-service JSON file, defaulting on errors.
 pub fn load_managed_services(path: &std::path::Path) -> Vec<ManagedService> {
     std::fs::read_to_string(path)
         .ok()
@@ -99,6 +110,7 @@ pub fn load_managed_services(path: &std::path::Path) -> Vec<ManagedService> {
         .unwrap_or_default()
 }
 
+/// Persist managed services using the existing pretty-printed JSON schema.
 pub fn save_managed_services(path: &std::path::Path, services: &[ManagedService]) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -123,11 +135,10 @@ mod native {
         ENUM_SERVICE_STATUS_PROCESSW, QUERY_SERVICE_CONFIGW, SC_ENUM_PROCESS_INFO, SC_HANDLE,
         SC_MANAGER_CONNECT, SC_MANAGER_ENUMERATE_SERVICE, SC_STATUS_PROCESS_INFO,
         SERVICE_CHANGE_CONFIG, SERVICE_CONFIG_DESCRIPTION, SERVICE_CONTINUE_PENDING,
-        SERVICE_CONTROL_STOP, SERVICE_PAUSE_PENDING, SERVICE_PAUSED, SERVICE_QUERY_CONFIG,
-        SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_START, SERVICE_START_PENDING,
-        SERVICE_STATE_ALL, SERVICE_STATUS, SERVICE_STATUS_PROCESS, SERVICE_STOP,
-        SERVICE_STOP_PENDING, SERVICE_STOPPED, SERVICE_WIN32, SERVICE_NO_CHANGE,
-        SERVICE_DESCRIPTIONW,
+        SERVICE_CONTROL_STOP, SERVICE_DESCRIPTIONW, SERVICE_NO_CHANGE, SERVICE_PAUSED,
+        SERVICE_PAUSE_PENDING, SERVICE_QUERY_CONFIG, SERVICE_QUERY_STATUS, SERVICE_RUNNING,
+        SERVICE_START, SERVICE_START_PENDING, SERVICE_STATE_ALL, SERVICE_STATUS,
+        SERVICE_STATUS_PROCESS, SERVICE_STOP, SERVICE_STOPPED, SERVICE_STOP_PENDING, SERVICE_WIN32,
     };
 
     /// RAII wrapper so a service handle is always released.
@@ -216,12 +227,14 @@ mod native {
         Ok(status.dwCurrentState)
     }
 
+    /// Query one service state while the manager handle is open.
     pub fn get_service_status(name: &str) -> Result<String, ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT)?;
         let service = open_service(manager.raw(), name, SERVICE_QUERY_STATUS)?;
         Ok(state_to_status(query_state(service.raw())?).to_string())
     }
 
+    /// Ask the Service Control Manager to start the named service.
     pub fn start_service(name: &str) -> Result<(), ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT)?;
         let service = open_service(manager.raw(), name, SERVICE_START | SERVICE_QUERY_STATUS)?;
@@ -237,6 +250,7 @@ mod native {
         Ok(())
     }
 
+    /// Ask the Service Control Manager to stop the named service.
     pub fn stop_service(name: &str) -> Result<(), ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT)?;
         let service = open_service(manager.raw(), name, SERVICE_STOP | SERVICE_QUERY_STATUS)?;
@@ -298,7 +312,7 @@ mod native {
     }
 
     fn buffer_bytes(buffer: &[usize]) -> u32 {
-        (buffer.len() * std::mem::size_of::<usize>()) as u32
+        std::mem::size_of_val(buffer) as u32
     }
 
     struct RawConfig {
@@ -325,8 +339,7 @@ mod native {
                 break;
             }
             let code = unsafe { GetLastError() };
-            if code == ERROR_INSUFFICIENT_BUFFER
-                && needed as usize > buffer_bytes(&buffer) as usize
+            if code == ERROR_INSUFFICIENT_BUFFER && needed as usize > buffer_bytes(&buffer) as usize
             {
                 buffer = aligned_buffer(needed as usize);
                 continue;
@@ -396,6 +409,7 @@ mod native {
             .collect()
     }
 
+    /// Query service configuration and process details through Win32 APIs.
     pub fn get_service_details(name: &str) -> Result<ServiceDetails, ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT)?;
         let service = open_service(
@@ -442,6 +456,7 @@ mod native {
         })
     }
 
+    /// Apply the startup mode to the named service through SCM configuration.
     pub fn set_service_start_type(name: &str, start_type: StartType) -> Result<(), ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT)?;
         let service = open_service(
@@ -470,6 +485,7 @@ mod native {
         Ok(())
     }
 
+    /// Enumerate service metadata from the Service Control Manager.
     pub fn list_all_services() -> Result<Vec<ServiceInfo>, ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE)?;
 
@@ -500,8 +516,7 @@ mod native {
             }
             let code = unsafe { GetLastError() };
             if code == ERROR_MORE_DATA {
-                let units = (needed as usize + std::mem::size_of::<usize>() - 1)
-                    / std::mem::size_of::<usize>();
+                let units = (needed as usize).div_ceil(std::mem::size_of::<usize>());
                 buffer.resize(units.max(8 * 1024), 0);
                 continue;
             }
@@ -537,35 +552,38 @@ pub use native::{
 };
 
 #[cfg(not(windows))]
+/// Query configuration and runtime details from the Windows Service Control Manager.
 pub fn get_service_details(name: &str) -> Result<ServiceDetails, ServiceError> {
     let _ = name;
     Err(ServiceError::UnsupportedPlatform)
 }
 
 #[cfg(not(windows))]
-pub fn set_service_start_type(
-    _name: &str,
-    _start_type: StartType,
-) -> Result<(), ServiceError> {
+/// Return the platform error when service configuration cannot be changed here.
+pub fn set_service_start_type(_name: &str, _start_type: StartType) -> Result<(), ServiceError> {
     Err(ServiceError::UnsupportedPlatform)
 }
 
 #[cfg(not(windows))]
+/// Enumerate services through the Windows Service Control Manager.
 pub fn list_all_services() -> Result<Vec<ServiceInfo>, ServiceError> {
     Err(ServiceError::UnsupportedPlatform)
 }
 
 #[cfg(not(windows))]
+/// Return the current status string for one internal service name.
 pub fn get_service_status(_name: &str) -> Result<String, ServiceError> {
     Err(ServiceError::UnsupportedPlatform)
 }
 
 #[cfg(not(windows))]
+/// Request that the Service Control Manager starts the named service.
 pub fn start_service(_name: &str) -> Result<(), ServiceError> {
     Err(ServiceError::UnsupportedPlatform)
 }
 
 #[cfg(not(windows))]
+/// Request that the Service Control Manager stops the named service.
 pub fn stop_service(_name: &str) -> Result<(), ServiceError> {
     Err(ServiceError::UnsupportedPlatform)
 }
@@ -584,7 +602,10 @@ mod tests {
 
     #[test]
     fn maps_error_codes_to_semantic_variants() {
-        assert!(matches!(classify(ERROR_ACCESS_DENIED), ServiceError::AccessDenied));
+        assert!(matches!(
+            classify(ERROR_ACCESS_DENIED),
+            ServiceError::AccessDenied
+        ));
         assert!(matches!(
             classify(ERROR_SERVICE_DOES_NOT_EXIST),
             ServiceError::NotFound

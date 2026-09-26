@@ -1,3 +1,9 @@
+//! Application state, navigation, persistence, and UI-facing operation results.
+//!
+//! This module owns the JSON compatibility boundary for settings, managed
+//! services, and scripts; backend work is performed by `backend` and applied
+//! to this state on the GPUI event loop.
+
 use crate::service::{ManagedService, ServiceDetails, ServiceInfo, StartType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -20,6 +26,7 @@ const TOOLS_COUNT: usize = 5;
 const SCRIPTS_COUNT: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Theme selection persisted using the stable `dark` and `light` values.
 pub enum Theme {
     #[serde(rename = "dark")]
     Dark,
@@ -28,6 +35,7 @@ pub enum Theme {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Top-level page selected in the application shell.
 pub enum View {
     Service,
     Tools,
@@ -37,6 +45,7 @@ pub enum View {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// UI-facing service status, including transient operation states.
 pub enum ServiceStatus {
     Running,
     Stopped,
@@ -60,6 +69,7 @@ impl ServiceStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Current application operation used to drive loading and disabled states.
 pub enum OperationState {
     Idle,
     LoadingServices,
@@ -74,6 +84,7 @@ pub enum OperationState {
 }
 
 #[derive(Debug, Clone)]
+/// Deferred service operation request submitted to the backend.
 pub enum PendingAction {
     StartService(String),
     StopService(String),
@@ -83,6 +94,7 @@ pub enum PendingAction {
 }
 
 #[derive(Debug, Default)]
+/// Search, selection, and result state for the add-service dialog.
 pub struct AddDialogState {
     show: bool,
     loading: bool,
@@ -343,6 +355,11 @@ impl Default for CleanupState {
     }
 }
 
+/// Persistence-backed application model shared with the GPUI window.
+///
+/// File paths and serialized values are kept compatible with the console
+/// version; asynchronous results are applied through this model on the UI
+/// thread.
 pub struct AppState {
     current_view: View,
     managed_services: Vec<ManagedService>,

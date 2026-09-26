@@ -1,3 +1,9 @@
+//! Blocking and platform-facing operations called from GPUI background tasks.
+//!
+//! Functions here translate native service, registry, and system-information
+//! results into application types; callers must keep blocking calls off the UI
+//! event loop.
+
 use crate::service::{ManagedService, ServiceError, ServiceInfo};
 use serde_json::Value;
 use std::path::Path;
@@ -11,6 +17,10 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// Errors returned by blocking backend operations.
+///
+/// Service errors retain the source wording because `AppState` maps those
+/// stable keywords to localized UI messages.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BackendError {
     #[error("service operation failed: {0}")]
@@ -27,6 +37,7 @@ pub enum BackendError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Snapshot of the system fields displayed by the information tool.
 pub struct SystemInfo {
     pub os: String,
     pub version: String,
@@ -38,26 +49,32 @@ pub struct SystemInfo {
     pub ram: String,
 }
 
+/// Enumerate services from the native Service Control Manager.
 pub fn list_services() -> Result<Vec<ServiceInfo>, BackendError> {
     crate::service::list_all_services().map_err(service_error)
 }
 
+/// Query a service's current status by its internal service name.
 pub fn service_status(name: &str) -> Result<String, BackendError> {
     crate::service::get_service_status(name).map_err(service_error)
 }
 
+/// Start a service; permission and state errors are returned to the caller.
 pub fn start_service(name: &str) -> Result<(), BackendError> {
     crate::service::start_service(name).map_err(service_error)
 }
 
+/// Stop a service; permission and dependency errors are returned to the caller.
 pub fn stop_service(name: &str) -> Result<(), BackendError> {
     crate::service::stop_service(name).map_err(service_error)
 }
 
+/// Read the service configuration and runtime details for the detail dialog.
 pub fn service_details(name: &str) -> Result<crate::service::ServiceDetails, BackendError> {
     crate::service::get_service_details(name).map_err(service_error)
 }
 
+/// Change the persisted startup mode through the Service Control Manager.
 pub fn set_service_start_type(
     name: &str,
     start_type: crate::service::StartType,
@@ -65,6 +82,7 @@ pub fn set_service_start_type(
     crate::service::set_service_start_type(name, start_type).map_err(service_error)
 }
 
+/// Write the selected managed services using the existing JSON schema.
 pub fn export_managed_services(
     path: &Path,
     services: &[ManagedService],
@@ -74,32 +92,42 @@ pub fn export_managed_services(
     std::fs::write(path, json).map_err(|error| BackendError::Command(error.to_string()))
 }
 
+/// Read managed services from an export file; the caller replaces its list.
 pub fn import_managed_services(path: &Path) -> Result<Vec<ManagedService>, BackendError> {
     let text =
         std::fs::read_to_string(path).map_err(|error| BackendError::Command(error.to_string()))?;
     serde_json::from_str(&text).map_err(|error| BackendError::Parse(error.to_string()))
 }
 
+/// Enumerate running processes for the process tool.
 pub fn list_processes() -> Result<Vec<crate::process::ProcessInfo>, BackendError> {
     Ok(crate::process::list())
 }
 
+/// Terminate a process by PID; callers must use the existing confirmation flow.
 pub fn terminate_process(pid: u32) -> Result<(), BackendError> {
     crate::process::terminate(pid).map_err(BackendError::Command)
 }
 
+/// Find processes and endpoints associated with a local TCP/UDP port.
 pub fn lookup_port(port: u16) -> Result<Vec<crate::port::PortEntry>, BackendError> {
     Ok(crate::port::lookup(port))
 }
 
+/// Collect one system metrics sample for the live monitor.
 pub fn sample_metrics() -> Result<crate::monitor::Metrics, BackendError> {
     Ok(crate::monitor::sample())
 }
 
+/// Enumerate supported startup entries from the current user's and machine's locations.
 pub fn list_startup() -> Result<Vec<crate::startup::StartupItem>, BackendError> {
     Ok(crate::startup::list())
 }
 
+/// Run a command through `cmd.exe`, capturing stdout and stderr.
+///
+/// On Windows the child console window is suppressed. This call blocks and
+/// must remain on a GPUI background task.
 pub fn run_command(command: &str) -> Result<String, BackendError> {
     let mut cmd = Command::new("cmd");
     cmd.args(["/C", command]);
@@ -122,7 +150,8 @@ pub fn run_command(command: &str) -> Result<String, BackendError> {
 
 /// Run a user script by writing the body to a temporary file and invoking the
 /// matching interpreter. Writing a file keeps multi-line scripts intact without
-/// any shell quoting.
+/// any shell quoting. The child process inherits the application's current user
+/// and elevation context.
 pub fn run_script(kind: ScriptKind, content: &str) -> Result<String, BackendError> {
     #[cfg(windows)]
     {
@@ -223,10 +252,12 @@ fn decode_console(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).to_string()
 }
 
+/// Flush the Windows DNS resolver cache using `ipconfig`.
 pub fn flush_dns() -> Result<String, BackendError> {
     run_command("ipconfig /flushdns")
 }
 
+/// Enable or disable one supported startup entry in its existing registry/location scope.
 pub fn set_startup_enabled(
     location: crate::startup::StartupLocation,
     value_name: &str,
@@ -236,6 +267,7 @@ pub fn set_startup_enabled(
 }
 
 #[derive(Debug, Clone)]
+/// Synchronous service action request; batch actions preserve input order.
 pub enum ServiceOperation {
     Start(String),
     Stop(String),
@@ -245,11 +277,16 @@ pub enum ServiceOperation {
 }
 
 #[derive(Debug)]
+/// Status or error returned for one service in an operation batch.
 pub struct ServiceOperationResult {
     pub name: String,
     pub status: Result<String, BackendError>,
 }
 
+/// Execute one service operation or a batch and return each resulting status.
+///
+/// This performs synchronous Windows API calls; invoke it from a background
+/// task rather than the GPUI event loop.
 pub fn execute_service_operation(operation: ServiceOperation) -> Vec<ServiceOperationResult> {
     match operation {
         ServiceOperation::Start(name) => vec![execute_one(&name, start_service)],
@@ -291,6 +328,10 @@ fn service_error(error: ServiceError) -> BackendError {
     BackendError::Service(error.to_string())
 }
 
+/// Fetch the system-information snapshot through hidden PowerShell execution.
+///
+/// This operation blocks while CIM data is collected and must run off the UI
+/// event loop.
 pub fn fetch_system_info() -> Result<SystemInfo, BackendError> {
     let script = r#"
         [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -326,6 +367,7 @@ pub fn fetch_system_info() -> Result<SystemInfo, BackendError> {
     parse_system_info_json(&String::from_utf8_lossy(&output.stdout))
 }
 
+/// Parse the normalized JSON object emitted by the system-information script.
 pub fn parse_system_info_json(input: &str) -> Result<SystemInfo, BackendError> {
     let value: Value =
         serde_json::from_str(input).map_err(|error| BackendError::Parse(error.to_string()))?;
@@ -355,6 +397,7 @@ fn value_as_text(value: Option<&Value>) -> String {
 }
 
 #[cfg(windows)]
+/// Reset Navicat state by removing its allowlisted registry keys.
 pub fn reset_navicat() -> Result<u32, BackendError> {
     use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
     use winreg::RegKey;
@@ -440,6 +483,7 @@ fn should_delete_key(hku: &winreg::RegKey, path: &str) -> bool {
 }
 
 #[cfg(not(windows))]
+/// Report that the Windows-only Navicat registry reset is unavailable.
 pub fn reset_navicat() -> Result<u32, BackendError> {
     Err(BackendError::UnsupportedPlatform)
 }

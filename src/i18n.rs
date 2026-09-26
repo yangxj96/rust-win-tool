@@ -1,3 +1,8 @@
+//! Stable language identifiers and localized text used by the application UI.
+//!
+//! Persisted language values remain `zh` and `en`; `Translations` provides
+//! static text so page rendering does not perform runtime file I/O.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

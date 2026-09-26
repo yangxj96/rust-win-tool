@@ -1,3 +1,8 @@
+//! Shared GPUI visual primitives used by pages and dialogs.
+//!
+//! Components translate framework-neutral theme tokens into GPUI styling so
+//! colors and common interaction surfaces stay consistent across pages.
+
 use gpui::prelude::*;
 use gpui::{px, relative, rgb, rgba, Animation, AnimationExt, Div, FontWeight, Rgba, SharedString};
 use std::time::Duration;

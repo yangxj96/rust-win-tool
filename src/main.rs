@@ -1,3 +1,6 @@
+//! Windows desktop entry point: initializes GPUI, elevation, single-instance
+//! handling, and the tray before constructing the main window.
+
 #![windows_subsystem = "windows"]
 
 use gpui::{

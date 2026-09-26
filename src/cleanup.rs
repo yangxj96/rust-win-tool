@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 /// Well-known cleanable locations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One of the fixed cleanup locations; paths are derived internally.
 pub enum CleanupCategory {
     UserTemp,
     WindowsTemp,
@@ -44,6 +45,7 @@ impl CleanupCategory {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Aggregate scan result; `bytes` counts regular-file sizes.
 pub struct Scan {
     pub bytes: u64,
     pub files: u64,
@@ -58,6 +60,7 @@ pub enum DeleteMode {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Outcome counts returned after the selected deletion mode runs.
 pub struct CleanReport {
     pub freed_bytes: u64,
     pub removed_files: u64,
@@ -66,10 +69,15 @@ pub struct CleanReport {
     pub completed: bool,
 }
 
+/// Scan one allowlisted category without following reparse points.
 pub fn scan(category: CleanupCategory) -> Scan {
     scan_paths(&category.entries())
 }
 
+/// Clean allowlisted categories using recycle-bin or permanent deletion.
+///
+/// Locked or inaccessible files are skipped; the report records the measured
+/// byte and file deltas.
 pub fn clean(categories: &[CleanupCategory], mode: DeleteMode) -> CleanReport {
     let paths: Vec<PathBuf> = categories.iter().flat_map(|c| c.entries()).collect();
     if paths.is_empty() {
@@ -137,6 +145,7 @@ pub fn empty_recycle_bin() -> bool {
     false
 }
 
+/// Format a byte count using the UI's existing binary-unit labels.
 pub fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     let value = bytes as f64;
