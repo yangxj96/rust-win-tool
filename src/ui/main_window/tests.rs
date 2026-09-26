@@ -1,4 +1,4 @@
-//! Regression coverage for root-window composition and visible UI selectors.
+//! 主窗口组合结构和界面选择器的回归测试。
 
 use super::{MainWindow, SERVICE_STATUS_COLUMN_WIDTH, TOOLS};
 use crate::app::{AppState, View};

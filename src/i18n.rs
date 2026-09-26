@@ -1,7 +1,7 @@
-//! Stable language identifiers and localized text used by the application UI.
+//! 应用界面使用的稳定语言标识和本地化文本。
 //!
-//! Persisted language values remain `zh` and `en`; `Translations` provides
-//! static text so page rendering does not perform runtime file I/O.
+//! 持久化语言值固定为 `zh` 和 `en`；`Translations` 提供静态文本，页面渲染时
+//! 不需要读取外部文件。
 
 use serde::{Deserialize, Serialize};
 

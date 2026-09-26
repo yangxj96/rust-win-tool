@@ -1,14 +1,13 @@
-//! Junk file scanning and cleanup.
+//! 扫描并清理系统垃圾文件。
 //!
-//! Only a fixed whitelist of well-known locations is ever touched, reparse
-//! points are never followed, and files that are locked or need permission are
-//! skipped rather than forced.
+//! 操作范围仅限固定白名单中的已知位置；不会跟随重解析点，也不会强制处理被占用
+//! 或需要额外权限的文件。
 
 use std::path::{Path, PathBuf};
 
-/// Well-known cleanable locations.
+/// 可清理的已知位置类别。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// One of the fixed cleanup locations; paths are derived internally.
+/// 固定清理位置之一；实际路径由程序内部推导。
 pub enum CleanupCategory {
     UserTemp,
     WindowsTemp,
@@ -26,12 +25,12 @@ impl CleanupCategory {
         ]
     }
 
-    /// System locations are only writable by an elevated process.
+    /// 系统位置仅允许已提权的进程写入。
     pub fn requires_admin(self) -> bool {
         matches!(self, Self::WindowsTemp | Self::WindowsUpdate)
     }
 
-    /// Top-level files and folders that scan and clean operate on.
+    /// 扫描和清理操作涉及的顶层文件与目录。
     fn entries(self) -> Vec<PathBuf> {
         match self {
             Self::UserTemp => children(std::env::temp_dir()),
@@ -45,7 +44,7 @@ impl CleanupCategory {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-/// Aggregate scan result; `bytes` counts regular-file sizes.
+/// 扫描汇总结果；`bytes` 为普通文件大小之和。
 pub struct Scan {
     pub bytes: u64,
     pub files: u64,
@@ -53,31 +52,30 @@ pub struct Scan {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteMode {
-    /// Move files to the recycle bin so the user can restore them.
+    /// 将文件移入回收站，用户之后仍可还原。
     Recycle,
-    /// Delete files permanently.
+    /// 永久删除文件。
     Permanent,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-/// Outcome counts returned after the selected deletion mode runs.
+/// 所选删除模式执行后的统计结果。
 pub struct CleanReport {
     pub freed_bytes: u64,
     pub removed_files: u64,
     pub skipped_files: u64,
-    /// False when the shell reported a partial or aborted operation.
+    /// Shell 报告操作部分完成或中止时为 `false`。
     pub completed: bool,
 }
 
-/// Scan one allowlisted category without following reparse points.
+/// 扫描一个白名单类别，且不跟随重解析点。
 pub fn scan(category: CleanupCategory) -> Scan {
     scan_paths(&category.entries())
 }
 
-/// Clean allowlisted categories using recycle-bin or permanent deletion.
+/// 使用回收站或永久删除模式清理指定的白名单类别。
 ///
-/// Locked or inaccessible files are skipped; the report records the measured
-/// byte and file deltas.
+/// 被占用或无法访问的文件会跳过；返回结果记录清理前后的字节数和文件数差值。
 pub fn clean(categories: &[CleanupCategory], mode: DeleteMode) -> CleanReport {
     let paths: Vec<PathBuf> = categories.iter().flat_map(|c| c.entries()).collect();
     if paths.is_empty() {
@@ -107,7 +105,7 @@ pub fn clean(categories: &[CleanupCategory], mode: DeleteMode) -> CleanReport {
     }
 }
 
-/// Total size (bytes) and item count currently in the recycle bin.
+/// 查询回收站当前占用大小（字节）和项目数量。
 #[cfg(windows)]
 pub fn recycle_bin_usage() -> Option<(u64, u64)> {
     use windows_sys::Win32::UI::Shell::{SHQueryRecycleBinW, SHQUERYRBINFO};
@@ -129,7 +127,7 @@ pub fn recycle_bin_usage() -> Option<(u64, u64)> {
     None
 }
 
-/// Empty the recycle bin. This is not undoable.
+/// 清空回收站。此操作无法撤销。
 #[cfg(windows)]
 pub fn empty_recycle_bin() -> bool {
     use windows_sys::Win32::UI::Shell::{
@@ -145,7 +143,7 @@ pub fn empty_recycle_bin() -> bool {
     false
 }
 
-/// Format a byte count using the UI's existing binary-unit labels.
+/// 使用界面现有的二进制单位标签格式化字节数。
 pub fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     let value = bytes as f64;

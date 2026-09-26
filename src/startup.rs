@@ -1,8 +1,7 @@
-//! Startup items from the registry Run keys and the Startup folders.
+//! 注册表 Run 项和启动文件夹中的开机启动项。
 //!
-//! Disabling never deletes anything: registry values are moved to a companion
-//! `RunDisabled` key and folder items are moved to a `disabled` subfolder, so
-//! both can be restored.
+//! 禁用操作不会删除任何内容：注册表值会移动到配套的 `RunDisabled` 项，文件夹中的
+//! 启动项会移动到 `disabled` 子目录，因此两类项目都可以恢复。
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartupLocation {
@@ -15,7 +14,7 @@ pub enum StartupLocation {
 #[derive(Debug, Clone)]
 pub struct StartupItem {
     pub location: StartupLocation,
-    /// Registry value name, or file name for folder entries.
+    /// 注册表值名称；对于文件夹启动项，此字段保存文件名。
     pub value_name: String,
     pub name: String,
     pub command: String,

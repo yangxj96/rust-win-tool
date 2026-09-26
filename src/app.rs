@@ -1,8 +1,7 @@
-//! Application state, navigation, persistence, and UI-facing operation results.
+//! 管理应用状态、页面导航、持久化数据和供界面使用的操作结果。
 //!
-//! This module owns the JSON compatibility boundary for settings, managed
-//! services, and scripts; backend work is performed by `backend` and applied
-//! to this state on the GPUI event loop.
+//! 本模块负责设置、托管服务和脚本数据的 JSON 兼容；耗时后端操作由
+//! `backend` 执行，结果再由 GPUI 事件循环写回此状态。
 
 use crate::service::{ManagedService, ServiceDetails, ServiceInfo, StartType};
 use serde::{Deserialize, Serialize};
@@ -26,7 +25,7 @@ const TOOLS_COUNT: usize = 5;
 const SCRIPTS_COUNT: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-/// Theme selection persisted using the stable `dark` and `light` values.
+/// 界面主题；持久化值固定为 `dark` 和 `light`。
 pub enum Theme {
     #[serde(rename = "dark")]
     Dark,
@@ -35,7 +34,7 @@ pub enum Theme {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Top-level page selected in the application shell.
+/// 应用主窗口当前显示的一级页面。
 pub enum View {
     Service,
     Tools,
@@ -45,7 +44,7 @@ pub enum View {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// UI-facing service status, including transient operation states.
+/// 服务在界面中显示的状态，包含操作期间的临时状态。
 pub enum ServiceStatus {
     Running,
     Stopped,
@@ -69,7 +68,7 @@ impl ServiceStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Current application operation used to drive loading and disabled states.
+/// 当前应用操作，用于控制加载提示和控件禁用状态。
 pub enum OperationState {
     Idle,
     LoadingServices,
@@ -84,7 +83,7 @@ pub enum OperationState {
 }
 
 #[derive(Debug, Clone)]
-/// Deferred service operation request submitted to the backend.
+/// 提交给后端执行的服务操作请求。
 pub enum PendingAction {
     StartService(String),
     StopService(String),
@@ -94,7 +93,7 @@ pub enum PendingAction {
 }
 
 #[derive(Debug, Default)]
-/// Search, selection, and result state for the add-service dialog.
+/// “添加服务”对话框的搜索、选择和结果状态。
 pub struct AddDialogState {
     show: bool,
     loading: bool,
@@ -105,13 +104,11 @@ pub struct AddDialogState {
     error: Option<String>,
 }
 
-/// Editable text with an optional IME composition segment. Shared by the
-/// add-service dialog and the main service list filter.
+/// 可编辑文本及可选的输入法组合文本，由添加服务对话框和服务列表筛选框共用。
 #[derive(Debug, Default)]
 struct SearchText {
     text: String,
-    /// Text currently being composed by the platform IME. It is displayed but
-    /// not committed to `text` until the IME reports a result.
+    /// 输入法正在组合的文本。输入法提交结果前只显示，不并入 `text`。
     marked: String,
 }
 
@@ -174,8 +171,7 @@ impl SearchText {
     }
 }
 
-/// Lightweight syntax sanity check for PowerShell bodies: parentheses, braces
-/// and quotes must be balanced outside of string literals.
+/// 对 PowerShell 脚本做轻量语法检查：字符串之外的括号、大括号和引号必须配对。
 fn balanced(text: &str) -> bool {
     let mut paren = 0i32;
     let mut brace = 0i32;
@@ -198,7 +194,7 @@ fn balanced(text: &str) -> bool {
     paren == 0 && brace == 0 && !in_single && !in_double
 }
 
-/// Which managed services the main list shows.
+/// 主服务列表采用的筛选条件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceFilter {
     All,
@@ -207,7 +203,7 @@ pub enum ServiceFilter {
     Pending,
 }
 
-/// Ordering of the main service list.
+/// 主服务列表的排序方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceSort {
     Manual,
@@ -225,7 +221,7 @@ impl ServiceSort {
     }
 }
 
-/// Ordering of the process list.
+/// 进程列表的排序方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessSort {
     Memory,
@@ -233,7 +229,7 @@ pub enum ProcessSort {
     Pid,
 }
 
-/// A user operation recorded for the session history.
+/// 记录在当前会话历史中的用户操作。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryAction {
     Start,
@@ -268,7 +264,7 @@ impl ServiceFilter {
     }
 }
 
-/// One cleanable location with its selection and last scan result.
+/// 一个可清理位置及其勾选状态、最近一次扫描结果。
 #[derive(Debug, Clone, Copy)]
 pub struct CleanupRow {
     pub category: CleanupCategory,
@@ -276,7 +272,7 @@ pub struct CleanupRow {
     pub scan: Option<Scan>,
 }
 
-/// Add-script dialog state: name, interpreter and multi-line body.
+/// 添加脚本对话框状态：名称、解释器类型和多行脚本内容。
 #[derive(Default)]
 struct ScriptDialogState {
     name: SearchText,
@@ -285,7 +281,7 @@ struct ScriptDialogState {
     error: Option<String>,
 }
 
-/// Startup items page state.
+/// 启动项页面状态。
 #[derive(Default)]
 pub struct StartupState {
     pub items: Vec<StartupItem>,
@@ -293,7 +289,7 @@ pub struct StartupState {
     pub error: Option<String>,
 }
 
-/// Network diagnostics page state.
+/// 网络诊断页面状态。
 #[derive(Default)]
 pub struct NetState {
     host: SearchText,
@@ -302,7 +298,7 @@ pub struct NetState {
     loading: bool,
 }
 
-/// Live system monitor state: latest sample plus short histories for charts.
+/// 实时监视器状态：最新采样值和供图表绘制的短期历史数据。
 #[derive(Default)]
 pub struct MonitorState {
     pub active: bool,
@@ -311,7 +307,7 @@ pub struct MonitorState {
     pub memory_history: Vec<f32>,
 }
 
-/// Port occupancy lookup dialog state.
+/// 端口占用查询对话框状态。
 #[derive(Default)]
 struct PortLookupState {
     open: bool,
@@ -325,7 +321,7 @@ struct PortLookupState {
 
 const MONITOR_HISTORY: usize = 60;
 
-/// Junk cleanup page state.
+/// 垃圾清理页面状态。
 pub struct CleanupState {
     pub scanning: bool,
     pub cleaning: bool,
@@ -355,17 +351,15 @@ impl Default for CleanupState {
     }
 }
 
-/// Persistence-backed application model shared with the GPUI window.
+/// 由 GPUI 主窗口共享、并负责持久化数据的应用模型。
 ///
-/// File paths and serialized values are kept compatible with the console
-/// version; asynchronous results are applied through this model on the UI
-/// thread.
+/// 文件路径和序列化值与控制台版本保持兼容；异步操作结果通过此模型在界面
+/// 线程中应用。
 pub struct AppState {
     current_view: View,
     managed_services: Vec<ManagedService>,
     service_statuses: HashMap<String, ServiceStatus>,
-    /// Last status confirmed by the backend, so a failed operation can fall
-    /// back to it instead of showing `Unknown`.
+    /// 后端最近一次确认的状态。操作失败时回退到此值，避免错误显示为“未知”。
     service_known_statuses: HashMap<String, ServiceStatus>,
     service_messages: HashMap<String, String>,
     data_file: PathBuf,
@@ -378,25 +372,25 @@ pub struct AppState {
     script_running: bool,
     scripts_file: PathBuf,
     custom_scripts: Vec<CustomScript>,
-    /// Command being entered in the "add script" dialog.
+    /// “添加脚本”对话框中正在输入的命令。
     script_dialog: Option<ScriptDialogState>,
     tool_detail_active: bool,
     system_info: Option<SystemInfo>,
     system_info_loading: bool,
     operation_state: OperationState,
     add_dialog: AddDialogState,
-    /// Free-text filter and status filter for the main service list.
+    /// 主服务列表的文本筛选和状态筛选条件。
     service_search: SearchText,
     service_filter: ServiceFilter,
     service_sort: ServiceSort,
     history: Vec<HistoryEntry>,
     cleanup: CleanupState,
-    /// Service whose details are shown in the detail overlay.
+    /// 当前详情浮层展示的服务。
     service_detail_name: Option<String>,
     service_detail: Option<ServiceDetails>,
     service_detail_loading: bool,
     service_detail_error: Option<String>,
-    /// Process manager state.
+    /// 进程管理器状态。
     processes: Vec<ProcessInfo>,
     processes_loading: bool,
     processes_error: Option<String>,
@@ -405,7 +399,7 @@ pub struct AppState {
     monitor: MonitorState,
     network: NetState,
     startup: StartupState,
-    /// Transient message shown after a refresh completes.
+    /// 刷新完成后短暂显示的提示信息。
     refresh_notice: Option<String>,
 }
 
@@ -483,14 +477,13 @@ impl AppState {
             self.release_tool_data();
         }
         if view != View::Scripts {
-            // The output popup belongs to the scripts page; drop it when the
-            // user navigates elsewhere so it cannot linger over other views.
+            // 输出浮层属于脚本页面。用户切换到其他页面时将其关闭，避免浮层残留在其他
+            // 页面上。
             self.script_output = None;
         }
     }
 
-    /// Drop tool-specific data so nothing keeps sampling while the user is
-    /// elsewhere.
+    /// 清除工具页数据，避免用户离开页面后仍继续采样。
     fn release_tool_data(&mut self) {
         self.monitor = MonitorState::default();
         self.system_info = None;
@@ -577,8 +570,7 @@ impl AppState {
         self.service_search.backspace();
     }
 
-    /// Indices into `managed_services` that pass the current search and status
-    /// filter, in the order requested by the sort setting.
+    /// `managed_services` 中符合当前文本和状态筛选的索引，顺序遵循当前排序设置。
     pub fn filtered_service_indices(&self) -> Vec<usize> {
         let search = self.service_search.text.to_lowercase();
         let mut indices: Vec<usize> = self
@@ -711,7 +703,7 @@ impl AppState {
             .collect()
     }
 
-    /// Combined size/count of the currently selected categories.
+    /// 当前选中清理类别的总大小和文件数量。
     pub fn selected_cleanup_totals(&self) -> Scan {
         let mut total = Scan::default();
         for row in &self.cleanup.rows {
@@ -904,7 +896,7 @@ impl AppState {
         self.port_lookup.searched
     }
 
-    /// The port currently shown in the lookup dialog, if a search has run.
+    /// 已执行查询时，对话框当前展示的端口号。
     pub fn port_lookup_port(&self) -> Option<u16> {
         if self.port_lookup.open && self.port_lookup.searched {
             self.port_lookup.port
@@ -913,9 +905,8 @@ impl AppState {
         }
     }
 
-    /// Validate the entered port and start a lookup. Returns the port to query
-    /// when valid; on invalid input the dialog shows an error and returns
-    /// `None`.
+    /// 验证输入的端口并开始查询。输入有效时返回待查询端口；无效时在对话框中
+    /// 显示错误并返回 `None`。
     pub fn begin_port_lookup(&mut self) -> Option<u16> {
         let translations = self.t();
         let raw = self.port_lookup.query.full_text();
@@ -1069,7 +1060,7 @@ impl AppState {
         }
     }
 
-    /// Process list ordered by the current sort setting.
+    /// 按当前排序设置排列的进程列表。
     pub fn sorted_processes(&self) -> Vec<&ProcessInfo> {
         let mut list: Vec<&ProcessInfo> = self.processes.iter().collect();
         match self.process_sort {
@@ -1145,8 +1136,8 @@ impl AppState {
     }
 
     pub fn apply_service_error(&mut self, name: &str, error: &BackendError) {
-        // Keep the last confirmed status so a failed start/stop does not make
-        // the row look unknown; the error is surfaced through the message.
+        // 保留后端最近确认的状态，避免启动或停止失败后列表项显示为未知；错误另通过提示
+        // 信息呈现。
         let status = self
             .service_known_statuses
             .get(name)
@@ -1166,7 +1157,7 @@ impl AppState {
         self.operation_state
     }
 
-    /// Transient "refreshed N services" message, if one is currently showing.
+    /// 当前正在显示的“已刷新 N 个服务”临时提示（如果存在）。
     pub fn refresh_notice(&self) -> Option<&str> {
         self.refresh_notice.as_deref()
     }
@@ -1195,7 +1186,7 @@ impl AppState {
         crate::service::save_managed_services(&self.data_file, &self.managed_services);
     }
 
-    /// Replace the whole managed list (used by import) and persist it.
+    /// 用导入结果替换整个托管服务列表并保存到磁盘。
     pub fn replace_managed_services(&mut self, services: Vec<ManagedService>) {
         self.managed_services = services;
         self.service_statuses.clear();
@@ -1258,18 +1249,17 @@ impl AppState {
         self.add_dialog.search.text.as_str()
     }
 
-    /// Text being composed by the IME, rendered after the committed search text.
+    /// 输入法正在组合的文本，显示在已提交的搜索文本之后。
     pub fn add_dialog_marked(&self) -> &str {
         self.add_dialog.search.marked.as_str()
     }
 
-    /// Total length of the editable text in UTF-16 units, matching the
-    /// platform input protocol.
+    /// 可编辑文本的 UTF-16 总长度，与平台输入协议采用的单位一致。
     pub fn add_dialog_text_utf16_len(&self) -> usize {
         self.add_dialog.search.utf16_len()
     }
 
-    /// The UTF-16 range occupied by the IME composition, if any.
+    /// 输入法组合文本占用的 UTF-16 范围；没有组合文本时返回空值。
     pub fn add_dialog_marked_range(&self) -> Option<Range<usize>> {
         self.add_dialog.search.marked_range()
     }
@@ -1278,26 +1268,26 @@ impl AppState {
         self.add_dialog.search.text_range(range)
     }
 
-    /// Replace a UTF-16 range of the editable text, clearing any composition.
+    /// 替换指定 UTF-16 范围的文本，并清除正在组合的输入法文本。
     pub fn add_dialog_replace_range(&mut self, range: Range<usize>, text: &str) {
         self.add_dialog.search.replace_range(range, text);
         self.add_dialog.selected = 0;
         self.rebuild_add_dialog_filter();
     }
 
-    /// Commit a chunk of text (typed character or IME result) at the cursor.
+    /// 在光标处提交一段文本，例如按键字符或输入法结果。
     pub fn add_dialog_commit_text(&mut self, text: &str) {
         self.add_dialog.search.commit(text);
         self.add_dialog.selected = 0;
         self.rebuild_add_dialog_filter();
     }
 
-    /// Begin or update an IME composition.
+    /// 开始或更新输入法组合文本。
     pub fn add_dialog_set_marked(&mut self, text: &str) {
         self.add_dialog.search.set_marked(text);
     }
 
-    /// Commit any pending composition.
+    /// 提交当前尚未确认的输入法组合文本。
     pub fn add_dialog_unmark(&mut self) {
         self.add_dialog.search.unmark();
         self.add_dialog.selected = 0;
@@ -1355,7 +1345,7 @@ impl AppState {
         self.language
     }
 
-    /// Switch directly to a language, used by the settings segmented control.
+    /// 直接切换语言，供设置页的分段选择控件调用。
     pub fn set_language(&mut self, language: Language) {
         if self.language != language {
             self.language = language;
@@ -1374,7 +1364,7 @@ impl AppState {
         }
     }
 
-    /// Switch directly to a theme, used by the settings segmented control.
+    /// 直接切换主题，供设置页的分段选择控件调用。
     pub fn set_theme(&mut self, theme: Theme) {
         if self.theme != theme {
             self.theme = theme;
@@ -1402,7 +1392,7 @@ impl AppState {
         }
     }
 
-    /// Number of script rows: built-ins followed by custom scripts.
+    /// 脚本列表行数，包含内置脚本和用户脚本。
     pub fn script_count(&self) -> usize {
         SCRIPTS_COUNT + self.custom_scripts.len()
     }
@@ -1565,7 +1555,7 @@ impl AppState {
         }
     }
 
-    /// Insert a line break in the multi-line script body.
+    /// 在多行脚本正文中插入换行符。
     pub fn script_dialog_content_newline(&mut self) {
         if let Some(dialog) = self.script_dialog.as_mut() {
             dialog.content.text.push('\n');
@@ -1594,7 +1584,7 @@ impl AppState {
             .and_then(|dialog| dialog.error.as_deref())
     }
 
-    /// Validate and store the custom script. Errors are shown in the dialog.
+    /// 验证并保存用户脚本；验证错误会显示在对话框中。
     pub fn confirm_add_script(&mut self) {
         let translations = self.t();
         let name_error = translations.script_err_name;
@@ -1694,7 +1684,7 @@ impl AppState {
         self.system_info_loading
     }
 
-    /// Re-run the system information fetch, showing the loading state again.
+    /// 重新获取系统信息，并再次显示加载状态。
     pub fn request_system_info_refresh(&mut self) {
         self.system_info = None;
         self.system_info_loading = true;
@@ -1810,12 +1800,12 @@ fn map_error(error: &BackendError, language: Language) -> String {
     }
 }
 
-/// Number of UTF-16 code units, which is what the platform input protocol uses.
+/// 计算 UTF-16 代码单元数量，与平台输入协议使用的长度单位一致。
 fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-/// Convert a UTF-16 offset into a byte offset, clamping to the end of the string.
+/// 将 UTF-16 偏移量转换为字节偏移量，并将超出范围的值限制在字符串末尾。
 fn byte_index_for_utf16(text: &str, target: usize) -> usize {
     let mut count = 0;
     for (byte_index, character) in text.char_indices() {
@@ -1965,10 +1955,10 @@ mod tests {
 
         assert_eq!(state.filtered_service_indices(), vec![0, 1]);
 
-        state.cycle_service_sort(); // Name
+        state.cycle_service_sort(); // 名称
         assert_eq!(state.filtered_service_indices(), vec![0, 1]);
 
-        state.cycle_service_sort(); // Status: running first
+        state.cycle_service_sort(); // 状态：运行中的服务优先
         assert_eq!(state.filtered_service_indices(), vec![1, 0]);
     }
 
@@ -2044,8 +2034,7 @@ mod tests {
     #[test]
     fn custom_script_dialog_validates_and_saves() {
         let mut state = AppState::new();
-        // Redirect persistence into the temp directory so tests never touch the
-        // real configuration file.
+        // 将持久化路径重定向到临时目录，避免测试触及真实配置文件。
         state.scripts_file = std::env::temp_dir().join("rust-win-tool-test-scripts.json");
         let _ = std::fs::remove_file(&state.scripts_file);
 

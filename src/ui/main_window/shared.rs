@@ -1,4 +1,4 @@
-//! Small render helpers and localized labels shared by window pages and dialogs.
+//! 窗口页面和对话框共用的小型渲染辅助函数与本地化标签。
 
 use super::*;
 
@@ -35,7 +35,7 @@ pub(super) fn toggle_window_zoom(window: &Window) {
     window.zoom_window();
 }
 
-/// A titled group of label/value rows for the system information page.
+/// 系统信息页面使用的标题及标签、数值行分组。
 pub(super) fn info_group(title: &'static str, rows: &[(&str, &str)], colors: &ThemeColors) -> Div {
     components::card(colors)
         .flex()
@@ -64,7 +64,7 @@ pub(super) fn info_group(title: &'static str, rows: &[(&str, &str)], colors: &Th
         }))
 }
 
-/// A two-state pill used by the settings rows.
+/// 设置行使用的双状态选项按钮。
 pub(super) fn segment(
     label: &str,
     active: bool,

@@ -1,7 +1,6 @@
-//! Shared service, history, tool, script-output, and confirmation dialogs.
+//! 服务详情、操作历史、工具、脚本输出和操作确认等共用对话框。
 //!
-//! Dialog callbacks preserve explicit confirm and cancel outcomes for each
-//! pending operation.
+//! 每个待处理操作都保留独立的确认与取消回调。
 
 use super::shared::*;
 use super::*;
@@ -121,9 +120,8 @@ impl MainWindow {
             .dialog_count
             .replace("{}", &state.add_dialog_filtered().len().to_string());
 
-        // The search field is the only text input. A transparent canvas overlay
-        // registers the platform input handler each paint, which is what enables
-        // IME composition (e.g. Chinese) on Windows.
+        // 搜索框是此窗口唯一的文本输入项。透明画布覆盖层在每次绘制时注册平台输入处理器，
+        // 以支持 Windows 输入法组合输入（例如中文输入）。
         let focused = self.search_focus.is_focused(window);
         let input_entity = cx.entity();
         let input_focus = self.search_focus.clone();

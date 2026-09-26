@@ -1,8 +1,7 @@
-//! Text input helpers for the GPUI frontend.
+//! GPUI 前端使用的文本输入辅助逻辑。
 //!
-//! The application has no global keyboard shortcuts. The add-service search
-//! field is the only place where key events are interpreted, and this module
-//! keeps that text-editing policy separate from the window.
+//! 应用没有注册全局键盘快捷键。只有添加服务对话框中的搜索框会处理键盘事件；
+//! 本模块将文本编辑规则与窗口实现分开维护。
 
 use gpui::KeyDownEvent;
 

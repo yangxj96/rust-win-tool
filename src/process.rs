@@ -1,7 +1,6 @@
-//! Process listing and termination.
+//! 进程列表查询和进程终止。
 //!
-//! CPU usage is derived from two `GetProcessTimes` samples taken a short time
-//! apart, so no long-lived sampling state is required.
+//! CPU 使用率通过间隔较短的两次 `GetProcessTimes` 采样计算，因此无需长期保存采样状态。
 
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
@@ -9,7 +8,7 @@ pub struct ProcessInfo {
     pub name: String,
     pub memory_bytes: u64,
     pub cpu_percent: f32,
-    /// Total CPU time in 100ns units; used while computing `cpu_percent`.
+    /// CPU 累计时间，单位为 100 纳秒；用于计算 `cpu_percent`。
     pub cpu_time: u64,
 }
 
@@ -172,8 +171,7 @@ mod platform {
         Ok(())
     }
 
-    /// Resolve a PID to its executable name, or an empty string if it cannot
-    /// be queried (for example protected processes).
+    /// 根据 PID 获取进程的可执行文件名称；无法查询时返回空字符串，例如受保护的进程。
     pub fn name_for_pid(pid: u32) -> String {
         match open(pid, PROCESS_QUERY_LIMITED_INFORMATION) {
             Some(handle) => process_name(handle.0),

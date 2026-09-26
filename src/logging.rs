@@ -1,8 +1,7 @@
-//! Minimal append-only file logger.
+//! 简单的追加式文件日志记录器。
 //!
-//! Logs live next to the configuration in `config/logs/rust-win-tool.log` and
-//! are written synchronously; logging failures are silently ignored so logging
-//! never affects the UI.
+//! 日志保存在配置目录旁的 `config/logs/rust-win-tool.log` 中，并以同步方式写入。
+//! 写入失败时会忽略错误，避免日志功能影响界面运行。
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -46,7 +45,7 @@ pub fn log(message: &str) {
     }
 }
 
-/// Reveal the log directory in the file explorer.
+/// 在文件资源管理器中打开日志目录。
 pub fn open_dir() {
     let _ = std::process::Command::new("explorer")
         .arg(log_dir())
@@ -65,7 +64,7 @@ fn timestamp() -> String {
     format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}Z")
 }
 
-/// Days since the Unix epoch to a civil date (Howard Hinnant's algorithm).
+/// 使用 Howard Hinnant 算法，将距 Unix 纪元的天数转换为公历日期。
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;

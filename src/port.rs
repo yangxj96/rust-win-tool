@@ -1,9 +1,7 @@
-//! Port occupancy lookup using the Windows IP Helper API.
+//! 使用 Windows IP Helper API 查询端口占用情况。
 //!
-//! The IPv4/IPv6 TCP and UDP owner tables are queried through
-//! `GetExtendedTcpTable` / `GetExtendedUdpTable`, so no external tooling is
-//! spawned. Results are filtered by local port and enriched with the owning
-//! process name.
+//! 通过 `GetExtendedTcpTable` / `GetExtendedUdpTable` 查询 IPv4/IPv6 的 TCP 和 UDP
+//! 所有者表，无需启动外部工具。结果会按本地端口筛选，并补充占用端口的进程名称。
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortProtocol {
@@ -43,8 +41,8 @@ mod platform {
         MIB_UDP6ROW_OWNER_PID, MIB_UDPROW_OWNER_PID, TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID,
     };
 
-    // AddressFamily constants (WinSock). Hard-coded to avoid pulling in the
-    // whole `Win32_Networking_WinSock` feature for two integers.
+    // 这里直接定义 WinSock 的 AddressFamily 常量，避免仅为两个整数引入整个
+    // `Win32_Networking_WinSock` 功能模块。
     const AF_INET: u32 = 2;
     const AF_INET6: u32 = 23;
 
@@ -54,7 +52,7 @@ mod platform {
     type GetTable =
         unsafe extern "system" fn(*mut core::ffi::c_void, *mut u32, BOOL, u32, i32, u32) -> u32;
 
-    /// Ports are stored in the low 16 bits in network byte order.
+    /// 端口号以网络字节序保存在低 16 位中。
     fn read_port(value: u32) -> u16 {
         u16::from_be(value as u16)
     }
@@ -77,8 +75,7 @@ mod platform {
         }
     }
 
-    /// Fetch a raw owner table. Returns an empty buffer when the family has no
-    /// entries or the API is unavailable.
+    /// 获取原始端口所有者表。当该地址族没有条目或 API 不可用时返回空缓冲区。
     unsafe fn query(get: GetTable, family: u32, class: i32) -> Vec<u8> {
         let mut size = 0u32;
         let mut code = get(std::ptr::null_mut(), &mut size, 0, family, class, 0);
@@ -96,7 +93,7 @@ mod platform {
         buffer
     }
 
-    /// The table layout is a `u32` entry count followed by tightly packed rows.
+    /// 表格布局为一个 `u32` 条目数量，后面紧跟连续排列的行数据。
     fn rows<T: Copy>(buffer: &[u8]) -> Vec<T> {
         if buffer.len() < 4 {
             return Vec::new();
@@ -239,7 +236,7 @@ mod tests {
 
     #[test]
     fn lookup_filters_by_port() {
-        // Exercises the table walking; every returned row must match the port.
+        // 验证表格遍历逻辑，确保返回的每一行都与目标端口匹配。
         for entry in lookup(65535) {
             assert_eq!(entry.local_port, 65535);
         }

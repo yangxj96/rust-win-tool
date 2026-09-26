@@ -1,7 +1,7 @@
-//! Root GPUI window entity and text-input integration.
+//! GPUI 主窗口实体和文本输入接入。
 //!
-//! The root owns window-level state and composes the shell, pages, and overlays;
-//! responsibility-specific rendering and callbacks live in sibling modules.
+//! 主窗口实体保存窗口级状态，并组合窗口外壳、各页面和浮层；按职责拆分的渲染逻辑
+//! 与回调放在同级子模块中。
 
 use std::ops::Range;
 
@@ -67,32 +67,31 @@ pub struct MainWindow {
     cleanup_scroll: ScrollHandle,
     script_scroll: ScrollHandle,
     port_scroll: ScrollHandle,
-    /// Managed service awaiting delete confirmation.
+    /// 正在等待删除确认的托管服务。
     pending_delete: Option<String>,
-    /// Cleanup confirmation dialogs.
+    /// 清理操作的确认对话框状态。
     pending_clean: bool,
     pending_empty_bin: bool,
-    /// Session operation history overlay.
+    /// 会话操作历史浮层是否打开。
     history_open: bool,
-    /// Process awaiting termination confirmation: (pid, name).
+    /// 等待结束确认的进程，包含 PID 和进程名。
     pending_kill: Option<(u32, String)>,
-    /// Whether the monitor sampling loop has been started.
+    /// 是否已经启动监视器采样循环。
     monitor_started: bool,
-    /// Whether a first refresh has already happened, so the launch refresh does
-    /// not show the completion notice.
+    /// 是否已完成首次刷新，避免启动时的首次刷新显示完成提示。
     refresh_notice_ready: bool,
 }
 
-/// Payload carried while dragging a custom scrollbar thumb.
+/// 拖动自定义滚动条滑块时保存的数据。
 #[derive(Clone)]
 struct ScrollbarDrag {
     handle: ScrollHandle,
 }
 
-/// Invisible preview view for the scrollbar drag interaction.
+/// 用于滚动条拖动交互的不可见预览视图。
 struct ScrollbarDragPreview;
 
-/// Which editable text field currently owns the platform input handler.
+/// 当前由哪个可编辑文本框接收平台输入事件。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TextTarget {
     Dialog,
@@ -103,7 +102,7 @@ enum TextTarget {
     ScriptContent,
 }
 
-/// Network diagnostic action.
+/// 网络诊断操作类型。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NetCheck {
     Ping,
@@ -111,7 +110,7 @@ enum NetCheck {
     Port,
 }
 
-/// Parameters for the shared confirmation dialog.
+/// 通用确认对话框所需的标题、按钮和回调参数。
 struct ConfirmDialog {
     title: &'static str,
     message: String,
@@ -186,10 +185,9 @@ impl MainWindow {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        // Text insertion is owned by the platform input handler (WM_CHAR / IME).
-        // Backspace is filtered out of WM_CHAR, so handle it here for whichever
-        // text field currently has focus. The multi-line script body also needs
-        // Enter to insert a line break instead of activating a button.
+        // 文本插入由平台输入处理器（WM_CHAR / 输入法）负责。WM_CHAR 会过滤退格键，
+        // 因此这里根据当前焦点文本框处理退格。脚本正文还需要将回车作为换行，而不是
+        // 激活按钮。
         let target = self.text_target(window);
         if event.keystroke.key == "enter" {
             match target {
@@ -254,7 +252,7 @@ impl MainWindow {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
-        // Keep running in the tray; exit is available from the tray menu.
+        // 窗口关闭后继续驻留托盘；用户可以从托盘菜单退出程序。
         #[cfg(target_os = "windows")]
         {
             let _ = &window;
@@ -320,7 +318,7 @@ impl MainWindow {
     }
 
     fn begin_add_dialog(&mut self, cx: &mut Context<Self>) {
-        // Fresh handle so the custom scrollbar re-measures for this dialog.
+        // 使用新的滚动句柄，使自定义滚动条能针对当前对话框重新测量。
         self.dialog_scroll = ScrollHandle::new();
         self.update_state(cx, |state| state.begin_add_dialog());
         let state = self.state.clone();
@@ -334,8 +332,7 @@ impl MainWindow {
                     cx.notify();
                 })
                 .ok();
-            // The custom scrollbar reads its metrics after the list has been
-            // laid out, so it needs one more frame to appear.
+            // 自定义滚动条要等列表完成布局后才能读取尺寸，因此还需要再绘制一帧才会显示。
             Timer::after(Duration::from_millis(100)).await;
             state.update(cx, |_state, cx| cx.notify()).ok();
         })
@@ -351,7 +348,7 @@ impl MainWindow {
             cx.notify();
             action
         });
-        // Announce manual refreshes, but not the automatic one on launch.
+        // 手动刷新显示完成提示，启动时的自动刷新不显示提示。
         let announce = self.refresh_notice_ready;
         self.refresh_notice_ready = true;
         self.spawn_service_operation(action, announce, cx);
@@ -435,8 +432,7 @@ impl MainWindow {
                 .background_spawn(async move { backend::execute_service_operation(operation) })
                 .await;
 
-            // A refresh can finish in a few milliseconds with the native backend;
-            // keep it visible long enough to register as an interaction.
+            // 原生后端可能在几毫秒内完成刷新；延长提示显示时间，确保用户能注意到反馈。
             if is_refresh {
                 let minimum = Duration::from_millis(700);
                 let elapsed = started.elapsed();
@@ -517,8 +513,8 @@ impl MainWindow {
                 return;
             }
 
-            // The native service API returns as soon as the request is accepted,
-            // so poll in the background and update the UI as services settle.
+            // 原生服务 API 在接受请求后立即返回，因此需要在后台轮询，并在服务状态稳定后
+            // 更新界面。
             for _ in 0..75 {
                 Timer::after(Duration::from_millis(400)).await;
                 let names = pending.clone();

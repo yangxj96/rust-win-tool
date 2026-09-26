@@ -1,5 +1,4 @@
-//! Windows desktop entry point: initializes GPUI, elevation, single-instance
-//! handling, and the tray before constructing the main window.
+//! Windows 桌面程序入口：初始化 GPUI、提权和单实例处理，再创建主窗口及托盘。
 
 #![windows_subsystem = "windows"]
 
@@ -27,9 +26,10 @@ mod ui;
 use app::AppState;
 use ui::main_window::MainWindow;
 
-/// Re-launch with administrator rights on Windows. gpui ships its own
-/// application manifest, so elevation cannot be requested through a manifest
-/// resource without conflicting with it; request it at startup instead.
+/// 在 Windows 上以管理员权限重新启动程序。
+///
+/// GPUI 自带应用清单，无法再添加互相冲突的提权清单资源，因此程序在启动阶段
+/// 显式请求管理员权限。
 #[cfg(target_os = "windows")]
 mod elevation {
     use std::ffi::{c_void, OsStr};
@@ -66,8 +66,7 @@ mod elevation {
         value.encode_wide().chain(std::iter::once(0)).collect()
     }
 
-    /// Returns `true` when this process should exit because an elevated copy
-    /// was launched in its place.
+    /// 成功启动提权副本并要求当前进程退出时返回 `true`。
     pub fn relaunch_elevated() -> bool {
         if is_elevated() {
             return false;
@@ -77,9 +76,8 @@ mod elevation {
         };
         let file = wide(executable.as_os_str());
         let verb: Vec<u16> = "runas".encode_utf16().chain(std::iter::once(0)).collect();
-        // A result of 32 or less means the request failed (for example the user
-        // dismissed the UAC prompt); this process stops in either case so the
-        // app never runs without administrator rights.
+        // 返回值不大于 32 表示启动失败（例如用户关闭了 UAC 提示）。无论何种失败，
+        // 当前进程都停止，确保应用不会在未提权的情况下继续运行。
         unsafe {
             ShellExecuteW(
                 std::ptr::null_mut(),
@@ -94,7 +92,7 @@ mod elevation {
     }
 }
 
-/// Keep a single running instance; a second launch focuses the existing window.
+/// 保持单实例运行；再次启动时将焦点切回已运行的窗口。
 #[cfg(target_os = "windows")]
 mod instance {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
@@ -111,8 +109,8 @@ mod instance {
         if handle.is_null() {
             return false;
         }
-        // The handle is intentionally leaked so the mutex lives for the whole
-        // process; when this process exits the name is released.
+        // 有意保留句柄，使互斥体在进程整个生命周期内持续有效；进程退出后系统会释放
+        // 该名称。
         unsafe { GetLastError() == ERROR_ALREADY_EXISTS }
     }
 

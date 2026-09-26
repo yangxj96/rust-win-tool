@@ -1,7 +1,7 @@
-//! Shared GPUI visual primitives used by pages and dialogs.
+//! 页面和对话框共用的 GPUI 视觉组件。
 //!
-//! Components translate framework-neutral theme tokens into GPUI styling so
-//! colors and common interaction surfaces stay consistent across pages.
+//! 这些组件将与框架无关的主题值转换为 GPUI 样式，确保各页面的颜色和常见交互
+//! 区域保持一致。
 
 use gpui::prelude::*;
 use gpui::{px, relative, rgb, rgba, Animation, AnimationExt, Div, FontWeight, Rgba, SharedString};
@@ -9,18 +9,18 @@ use std::time::Duration;
 
 use crate::theme::{StatusColors, ThemeColors};
 
-/// Convert a framework-neutral `0xRRGGBB` token into a GPUI color.
+/// 将通用的 `0xRRGGBB` 颜色值转换为 GPUI 颜色。
 pub fn color(value: u32) -> Rgba {
     rgb(value)
 }
 
-/// A fully transparent fill, used by ghost controls.
+/// 完全透明的填充色，用于幽灵样式控件。
 fn transparent() -> Rgba {
     rgba(0x00000000)
 }
 
-/// Visual weight of a button. There is exactly one accent (`Primary`) per
-/// screen; everything else is neutral until the user hovers it.
+/// 按钮的视觉强调级别。每个页面只使用一个强调色（`Primary`）；其他按钮默认采用
+/// 中性色，仅在鼠标悬停时高亮。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonVariant {
     Primary,
@@ -29,8 +29,8 @@ pub enum ButtonVariant {
     Danger,
 }
 
-/// Compact, 32px-tall button. Callers may override height and padding on the
-/// returned `Div` for dense contexts such as table action columns.
+/// 高度为 32px 的紧凑按钮。表格操作列等空间有限的场景可以调整返回 `Div` 的
+/// 高度和内边距。
 pub fn button(label: impl Into<SharedString>, colors: &ThemeColors, variant: ButtonVariant) -> Div {
     let base = gpui::div()
         .flex()
@@ -76,8 +76,7 @@ pub fn button(label: impl Into<SharedString>, colors: &ThemeColors, variant: But
     styled.child(label.into())
 }
 
-/// A surface panel with a hairline border. Elevation is expressed through the
-/// layered background tokens rather than heavy shadows.
+/// 带细边框的内容面板。层次感通过叠加背景色表达，避免使用明显阴影。
 pub fn card(colors: &ThemeColors) -> Div {
     gpui::div()
         .w_full()
@@ -87,8 +86,8 @@ pub fn card(colors: &ThemeColors) -> Div {
         .bg(color(colors.bg.surface))
 }
 
-/// A navigation row. Selected rows use the soft brand tint plus the accent
-/// text color; unselected rows stay muted so the active page stands out.
+/// 导航列表项。选中项使用柔和的品牌底色和强调文字；未选中项保持低对比度，让
+/// 当前页面更醒目。
 pub fn sidebar_item(
     icon: &str,
     label: impl Into<SharedString>,
@@ -125,8 +124,7 @@ pub fn sidebar_item(
         .child(label.into())
 }
 
-/// Window titlebar control. The close control turns solid red on hover while
-/// the others fall back to the neutral hover surface.
+/// 标题栏窗口控制按钮。关闭按钮悬停时显示纯红色，其他按钮使用中性悬停底色。
 pub fn window_control(label: impl Into<SharedString>, colors: &ThemeColors, danger: bool) -> Div {
     let hover_background = if danger {
         colors.danger.solid
@@ -154,7 +152,7 @@ pub fn window_control(label: impl Into<SharedString>, colors: &ThemeColors, dang
         .child(label.into())
 }
 
-/// Soft status pill: tinted background, readable status text and a solid dot.
+/// 柔和样式的状态徽标，包含浅色背景、易读状态文字和实心圆点。
 pub fn badge(label: impl Into<SharedString>, status: &StatusColors) -> Div {
     gpui::div()
         .flex()
@@ -179,8 +177,8 @@ pub fn badge(label: impl Into<SharedString>, status: &StatusColors) -> Div {
         .child(label.into())
 }
 
-/// Inset text field. Shows the committed value, any in-progress IME
-/// composition (underlined) and a blinking caret while focused.
+/// 内嵌文本输入框。显示已提交文本、带下划线的输入法组合文本，以及聚焦时闪烁的
+/// 光标。
 pub fn search_field(
     value: &str,
     marked: &str,
@@ -208,8 +206,7 @@ pub fn search_field(
     };
 
     if value.is_empty() && marked.is_empty() {
-        // Empty field: the caret sits at the insertion point, before the
-        // placeholder, matching the usual text-field behaviour.
+        // 输入框为空时，光标位于占位文字之前的插入位置，符合常见文本框行为。
         if focused {
             contents = contents.child(caret(colors));
         }
@@ -250,9 +247,8 @@ pub fn search_field(
         .child(contents)
 }
 
-/// Multi-line text area. Line breaks in `value` are rendered as separate rows
-/// so wrapped bodies stay readable and the caret sits at the end of the last
-/// line while focused.
+/// 多行文本区域。`value` 中的换行会拆成多行显示，保持脚本正文易读；聚焦时光标
+/// 位于最后一行末尾。
 pub fn text_area(
     value: &str,
     marked: &str,
@@ -334,7 +330,7 @@ pub fn text_area(
         .child(body)
 }
 
-/// Small uppercase-ish section caption used above grouped content.
+/// 分组内容上方使用的小型章节说明文字。
 pub fn section_label(text: impl Into<SharedString>, colors: &ThemeColors) -> Div {
     gpui::div()
         .text_xs()
@@ -343,7 +339,7 @@ pub fn section_label(text: impl Into<SharedString>, colors: &ThemeColors) -> Div
         .child(text.into())
 }
 
-/// Card heading, one step stronger than `section_label`.
+/// 卡片标题，视觉强调级别高于 `section_label`。
 pub fn card_title(text: impl Into<SharedString>, colors: &ThemeColors) -> Div {
     gpui::div()
         .text_sm()
@@ -352,7 +348,7 @@ pub fn card_title(text: impl Into<SharedString>, colors: &ThemeColors) -> Div {
         .child(text.into())
 }
 
-/// Bar sparkline for a series of 0..=1 values, anchored to the bottom.
+/// 绘制一组 `0..=1` 数值的柱状迷你图，所有柱子以底边对齐。
 pub fn sparkline(values: &[f32], accent: u32) -> Div {
     gpui::div()
         .flex()
@@ -369,7 +365,7 @@ pub fn sparkline(values: &[f32], accent: u32) -> Div {
         }))
 }
 
-/// Indeterminate progress bar shown while a refresh is in flight.
+/// 刷新进行中显示的非确定进度条。
 pub fn progress_bar(colors: &ThemeColors) -> Div {
     gpui::div()
         .w_full()
@@ -390,7 +386,7 @@ pub fn progress_bar(colors: &ThemeColors) -> Div {
         )
 }
 
-/// Centered empty state with a large glyph, a title and a hint line.
+/// 居中显示的空状态，包含醒目图标、标题和提示文字。
 pub fn empty_state(
     icon: &str,
     title: impl Into<SharedString>,
@@ -425,7 +421,7 @@ pub fn empty_state(
         )
 }
 
-/// Inline result banner tinted by a semantic status.
+/// 根据语义状态着色的行内结果提示条。
 pub fn alert(text: impl Into<SharedString>, status: &StatusColors) -> Div {
     gpui::div()
         .flex()

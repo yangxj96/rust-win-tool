@@ -1,7 +1,6 @@
-//! Network diagnostics: DNS resolution, TCP port checks and ICMP ping.
+//! 网络诊断功能：DNS 解析、TCP 端口检查和 ICMP Ping。
 //!
-//! DNS and port checks use the standard library; ping uses `IcmpSendEcho`
-//! because the standard library has no ICMP support.
+//! DNS 解析和端口检查使用标准库；标准库不支持 ICMP，因此 Ping 通过 `IcmpSendEcho` 实现。
 
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::time::Duration;

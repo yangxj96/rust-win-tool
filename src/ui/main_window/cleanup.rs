@@ -1,7 +1,6 @@
-//! Cleanup page and its scan, deletion, recycle-bin, and confirmation flows.
+//! 清理页面及其扫描、删除、回收站和确认流程。
 //!
-//! The cleanup backend owns the allowlist and deletion semantics; this module
-//! only schedules those operations and presents their results.
+//! 白名单和删除语义由清理后端负责；本模块只调度操作并展示结果。
 
 use super::shared::*;
 use super::*;

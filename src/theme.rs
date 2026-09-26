@@ -1,62 +1,59 @@
-//! Framework-neutral design tokens stored as 24-bit RGB values. The GPUI
-//! layer converts them to `Rgba` values, so the state layer stays independent
-//! of the frontend framework.
+//! 与界面框架无关的设计令牌，以 24 位 RGB 值保存。GPUI 层会将其转换为
+//! `Rgba`，从而使状态层不依赖具体的前端框架。
 //!
-//! Tokens are grouped by role instead of being a flat list, which keeps the
-//! palette coherent as the UI grows:
+//! 令牌按用途分组，而不是平铺排列，以便界面扩展时仍能保持色彩体系一致：
 //!
-//! - `bg`     — layered surfaces, from the window canvas up to popovers
-//! - `fg`     — text weights from primary content to placeholders
-//! - `border` — hairline separators and outlines
-//! - `brand`  — the single accent color plus its solid fill states
-//! - `status` — `success` / `warning` / `danger` / `info`, each with a
-//!   solid dot color, a readable text color and a soft tint
+//! - `bg`：背景层级，从窗口底色到弹出层。
+//! - `fg`：文字层级，从主要内容到占位文本。
+//! - `border`：细分隔线和边框。
+//! - `brand`：统一的品牌强调色及其纯色填充状态。
+//! - `status`：`success`、`warning`、`danger`、`info` 状态色，各自包含实心标记色、
+//!   易读的文字色和柔和的底色。
 
-/// Layered background surfaces. Each step should be perceptibly distinct so
-/// elevation reads without relying on heavy borders.
+/// 分层背景表面。相邻层级应有清晰但柔和的区别，让界面层次无需依赖粗重边框也能辨认。
 pub struct BgColors {
-    /// Root window background and the main content canvas.
+    /// 主窗口背景及主要内容画布。
     pub canvas: u32,
-    /// Left navigation rail.
+    /// 左侧导航栏。
     pub sidebar: u32,
-    /// Cards and table rows.
+    /// 卡片和表格行。
     pub surface: u32,
-    /// Hover state for rows and neutral controls.
+    /// 表格行和中性控件的悬停状态。
     pub surface_hover: u32,
-    /// Dialogs and floating layers above `surface`.
+    /// 对话框及高于 `surface` 的浮动层。
     pub elevated: u32,
-    /// Recessed areas such as table headers.
+    /// 凹入区域，例如表格标题行。
     pub muted: u32,
 }
 
-/// Text colors, ordered from strongest to weakest emphasis.
+/// 文字颜色，按强调程度从强到弱排列。
 pub struct FgColors {
     pub default: u32,
     pub muted: u32,
     pub subtle: u32,
-    /// Text drawn on a solid brand or status fill.
+    /// 绘制在品牌色或状态色纯色背景上的文字。
     pub on_accent: u32,
 }
 
-/// Border and divider colors.
+/// 边框和分隔线颜色。
 pub struct BorderColors {
     pub default: u32,
     pub subtle: u32,
     pub strong: u32,
 }
 
-/// The single accent color and its solid button fill states.
+/// 统一的强调色及按钮纯色填充状态。
 pub struct BrandColors {
-    /// Accent used for text, icons and focus rings on a dark/light surface.
+    /// 用于深色或浅色表面上的文字、图标和焦点环的强调色。
     pub primary: u32,
-    /// Solid fill for primary buttons; chosen so white text stays readable.
+    /// 主要按钮的纯色填充，确保白色文字保持清晰易读。
     pub fill: u32,
     pub fill_hover: u32,
-    /// Soft tint used for selected navigation and badges.
+    /// 用于选中导航项和状态徽标的柔和底色。
     pub soft: u32,
 }
 
-/// One semantic status expressed as a dot color, a text color and a tint.
+/// 一个语义状态对应的标记点颜色、文字颜色和柔和底色。
 pub struct StatusColors {
     pub solid: u32,
     pub text: u32,

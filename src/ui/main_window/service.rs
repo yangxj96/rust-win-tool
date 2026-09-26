@@ -1,7 +1,6 @@
-//! Service page rendering and UI actions for service lifecycle and metadata.
+//! 服务页面的渲染，以及服务生命周期和元数据相关操作。
 //!
-//! Backend calls remain asynchronous; confirmation actions preserve the
-//! existing managed-service replacement and deletion flows.
+//! 后端调用继续异步执行；确认操作沿用现有的托管服务替换和删除流程。
 
 use super::shared::*;
 use super::*;

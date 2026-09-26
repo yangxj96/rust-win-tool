@@ -1,32 +1,31 @@
-//! Native Windows Service Control Manager access and portable service models.
+//! Windows 服务控制管理器的原生访问接口及跨平台服务数据类型。
 //!
-//! Win32 handles are wrapped for deterministic release, and pointer-backed
-//! query buffers remain aligned as `usize` storage before interpreting API
-//! structures.
+//! Win32 句柄通过包装类型确保及时释放；查询缓冲区使用按 `usize` 对齐的存储，
+//! 再转换为 Windows API 返回的结构体。
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Service fields retained in the backward-compatible service JSON file.
+/// 服务信息字段，与旧版服务 JSON 文件保持兼容。
 pub struct ServiceInfo {
     pub name: String,
     pub display_name: String,
     pub status: String,
     pub start_type: String,
-    /// Currently unused; kept for JSON backward compatibility
+    /// 当前未使用；为兼容旧版 JSON 保留。
     pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// User-managed service entry persisted by the application.
+/// 应用保存的用户托管服务条目。
 pub struct ManagedService {
     pub name: String,
     pub display_name: String,
-    /// Currently unused; kept for JSON backward compatibility
+    /// 当前未使用；为兼容旧版 JSON 保留。
     pub enabled: bool,
 }
 
-/// Service start type, mapped to the Win32 `SERVICE_*_START` values.
+/// 服务启动类型，对应 Win32 的 `SERVICE_*_START` 数值。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartType {
     Automatic,
@@ -36,7 +35,7 @@ pub enum StartType {
 }
 
 impl StartType {
-    /// Convert to the numeric value expected by the Service Control Manager.
+    /// 转换为服务控制管理器要求的数值。
     pub fn code(self) -> u32 {
         match self {
             Self::Automatic => 2,
@@ -46,7 +45,7 @@ impl StartType {
         }
     }
 
-    /// Map a Service Control Manager startup value to its typed UI value.
+    /// 将服务控制管理器的启动数值映射为界面使用的类型。
     pub fn from_code(code: u32) -> Self {
         match code {
             2 => Self::Automatic,
@@ -57,7 +56,7 @@ impl StartType {
     }
 }
 
-/// Detailed configuration and runtime information for one service.
+/// 单个服务的详细配置和运行时信息。
 #[derive(Debug, Clone)]
 pub struct ServiceDetails {
     pub name: String,
@@ -68,17 +67,16 @@ pub struct ServiceDetails {
     pub binary_path: String,
     pub account: String,
     pub process_id: u32,
-    /// Services this one depends on.
+    /// 当前服务依赖的其他服务。
     pub depends_on: Vec<String>,
-    /// Services that depend on this one (affected when it stops).
+    /// 依赖当前服务的其他服务；停止当前服务时这些服务也会受影响。
     pub dependents: Vec<String>,
 }
 
-/// Service backend errors.
+/// 服务后端错误。
 ///
-/// The `Display` text intentionally contains the English keywords that the UI
-/// error mapper (`map_error` in `src/app.rs`) already recognizes, so the user
-/// facing messages stay identical after moving off PowerShell.
+/// `Display` 文本保留界面错误映射器（`src/app.rs` 中的 `map_error`）识别的英文
+/// 关键词，确保替换 PowerShell 实现后用户看到的提示不变。
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
     #[error("access is denied")]
@@ -102,7 +100,7 @@ pub enum ServiceError {
     CommandFailed(String),
 }
 
-/// Load the legacy-compatible managed-service JSON file, defaulting on errors.
+/// 读取兼容旧版格式的托管服务 JSON 文件；读取或解析失败时返回空列表。
 pub fn load_managed_services(path: &std::path::Path) -> Vec<ManagedService> {
     std::fs::read_to_string(path)
         .ok()
@@ -110,7 +108,7 @@ pub fn load_managed_services(path: &std::path::Path) -> Vec<ManagedService> {
         .unwrap_or_default()
 }
 
-/// Persist managed services using the existing pretty-printed JSON schema.
+/// 使用现有的缩进 JSON 格式保存托管服务列表。
 pub fn save_managed_services(path: &std::path::Path, services: &[ManagedService]) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -141,7 +139,7 @@ mod native {
         SERVICE_STATUS_PROCESS, SERVICE_STOP, SERVICE_STOPPED, SERVICE_STOP_PENDING, SERVICE_WIN32,
     };
 
-    /// RAII wrapper so a service handle is always released.
+    /// RAII 句柄包装器，确保服务句柄在离开作用域时释放。
     struct Handle(SC_HANDLE);
 
     impl Handle {
@@ -172,7 +170,7 @@ mod native {
         classify(unsafe { GetLastError() })
     }
 
-    /// Map a Win32 error code onto the user-facing error variants.
+    /// 将 Win32 错误码映射为界面可识别的错误类型。
     pub(super) fn classify(code: u32) -> ServiceError {
         match code {
             ERROR_ACCESS_DENIED => ServiceError::AccessDenied,
@@ -186,7 +184,7 @@ mod native {
         }
     }
 
-    /// Translate `SERVICE_STATUS.dwCurrentState` into the strings the UI parses.
+    /// 将 `SERVICE_STATUS.dwCurrentState` 转换为界面解析的状态文本。
     pub(super) fn state_to_status(state: u32) -> &'static str {
         match state {
             SERVICE_RUNNING => "Running",
@@ -227,21 +225,21 @@ mod native {
         Ok(status.dwCurrentState)
     }
 
-    /// Query one service state while the manager handle is open.
+    /// 在服务管理器句柄有效期间查询单个服务状态。
     pub fn get_service_status(name: &str) -> Result<String, ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT)?;
         let service = open_service(manager.raw(), name, SERVICE_QUERY_STATUS)?;
         Ok(state_to_status(query_state(service.raw())?).to_string())
     }
 
-    /// Ask the Service Control Manager to start the named service.
+    /// 请求服务控制管理器启动指定服务。
     pub fn start_service(name: &str) -> Result<(), ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT)?;
         let service = open_service(manager.raw(), name, SERVICE_START | SERVICE_QUERY_STATUS)?;
         let started = unsafe { StartServiceW(service.raw(), 0, std::ptr::null()) };
         if started == 0 {
             let error = last_error();
-            // Already running is a success from the caller's point of view.
+            // 对调用方而言，服务已经在运行即视为启动成功。
             if matches!(error, ServiceError::AlreadyRunning) {
                 return Ok(());
             }
@@ -250,7 +248,7 @@ mod native {
         Ok(())
     }
 
-    /// Ask the Service Control Manager to stop the named service.
+    /// 请求服务控制管理器停止指定服务。
     pub fn stop_service(name: &str) -> Result<(), ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT)?;
         let service = open_service(manager.raw(), name, SERVICE_STOP | SERVICE_QUERY_STATUS)?;
@@ -258,7 +256,7 @@ mod native {
         let stopped = unsafe { ControlService(service.raw(), SERVICE_CONTROL_STOP, &mut status) };
         if stopped == 0 {
             let error = last_error();
-            // Already stopped is a success from the caller's point of view.
+            // 对调用方而言，服务已经停止即视为停止成功。
             if matches!(error, ServiceError::NotStarted) {
                 return Ok(());
             }
@@ -280,7 +278,7 @@ mod native {
         }
     }
 
-    /// Split a double-null terminated multi-string into individual values.
+    /// 将双空字符结尾的多字符串拆分为独立字符串。
     fn multi_string(pointer: *const u16) -> Vec<String> {
         if pointer.is_null() {
             return Vec::new();
@@ -305,7 +303,7 @@ mod native {
         values
     }
 
-    /// 8-byte aligned scratch buffer for the Win32 service structures.
+    /// 为 Win32 服务结构体提供 8 字节对齐的临时缓冲区。
     fn aligned_buffer(bytes: usize) -> Vec<usize> {
         let unit = std::mem::size_of::<usize>();
         vec![0usize; bytes.div_ceil(unit)]
@@ -409,7 +407,7 @@ mod native {
             .collect()
     }
 
-    /// Query service configuration and process details through Win32 APIs.
+    /// 通过 Win32 API 查询服务配置和进程信息。
     pub fn get_service_details(name: &str) -> Result<ServiceDetails, ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT)?;
         let service = open_service(
@@ -456,7 +454,7 @@ mod native {
         })
     }
 
-    /// Apply the startup mode to the named service through SCM configuration.
+    /// 通过服务控制管理器配置指定服务的启动类型。
     pub fn set_service_start_type(name: &str, start_type: StartType) -> Result<(), ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT)?;
         let service = open_service(
@@ -485,12 +483,12 @@ mod native {
         Ok(())
     }
 
-    /// Enumerate service metadata from the Service Control Manager.
+    /// 从服务控制管理器枚举服务元数据。
     pub fn list_all_services() -> Result<Vec<ServiceInfo>, ServiceError> {
         let manager = open_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE)?;
 
-        // `Vec<usize>` gives the 8-byte alignment `ENUM_SERVICE_STATUS_PROCESSW`
-        // requires, which a plain `Vec<u8>` would not guarantee.
+        // `Vec<usize>` 能满足 `ENUM_SERVICE_STATUS_PROCESSW` 所需的 8 字节对齐；
+        // 普通的 `Vec<u8>` 不保证这一点。
         let mut buffer: Vec<usize> = vec![0; 8 * 1024];
         let mut returned = 0u32;
 
@@ -552,38 +550,38 @@ pub use native::{
 };
 
 #[cfg(not(windows))]
-/// Query configuration and runtime details from the Windows Service Control Manager.
+/// 查询 Windows 服务控制管理器中的服务配置和运行时信息。
 pub fn get_service_details(name: &str) -> Result<ServiceDetails, ServiceError> {
     let _ = name;
     Err(ServiceError::UnsupportedPlatform)
 }
 
 #[cfg(not(windows))]
-/// Return the platform error when service configuration cannot be changed here.
+/// 当前平台不支持修改服务配置时返回平台错误。
 pub fn set_service_start_type(_name: &str, _start_type: StartType) -> Result<(), ServiceError> {
     Err(ServiceError::UnsupportedPlatform)
 }
 
 #[cfg(not(windows))]
-/// Enumerate services through the Windows Service Control Manager.
+/// 通过 Windows 服务控制管理器枚举服务。
 pub fn list_all_services() -> Result<Vec<ServiceInfo>, ServiceError> {
     Err(ServiceError::UnsupportedPlatform)
 }
 
 #[cfg(not(windows))]
-/// Return the current status string for one internal service name.
+/// 根据服务内部名称返回当前状态文本。
 pub fn get_service_status(_name: &str) -> Result<String, ServiceError> {
     Err(ServiceError::UnsupportedPlatform)
 }
 
 #[cfg(not(windows))]
-/// Request that the Service Control Manager starts the named service.
+/// 请求服务控制管理器启动指定服务。
 pub fn start_service(_name: &str) -> Result<(), ServiceError> {
     Err(ServiceError::UnsupportedPlatform)
 }
 
 #[cfg(not(windows))]
-/// Request that the Service Control Manager stops the named service.
+/// 请求服务控制管理器停止指定服务。
 pub fn stop_service(_name: &str) -> Result<(), ServiceError> {
     Err(ServiceError::UnsupportedPlatform)
 }

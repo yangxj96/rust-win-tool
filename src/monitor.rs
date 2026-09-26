@@ -1,7 +1,7 @@
-//! System resource sampling: CPU, memory, disks and network throughput.
+//! 系统资源采样：CPU、内存、磁盘和网络吞吐量。
 //!
-//! CPU and network rates need the previous sample, which is kept in a process
-//! global so the caller only has to poll `sample()` periodically.
+//! CPU 和网络速率需要前一次采样数据。数据保存在进程级全局状态中，调用方只需定期轮询
+//! `sample()`。
 
 #[derive(Debug, Clone, Default)]
 pub struct DiskUsage {
@@ -17,7 +17,7 @@ pub struct Metrics {
     pub memory_used: u64,
     pub memory_total: u64,
     pub disks: Vec<DiskUsage>,
-    /// Network receive / transmit bytes per second.
+    /// 网络每秒接收和发送的字节数。
     pub net_rx_bps: f64,
     pub net_tx_bps: f64,
 }
@@ -118,7 +118,7 @@ mod platform {
             let rows = (*table).Table.as_ptr();
             for index in 0..(*table).NumEntries as usize {
                 let row = &*rows.add(index);
-                // Skip loopback and interfaces that are not up.
+                // 跳过环回接口和当前未启用的网络接口。
                 if row.Type == 24 || row.OperStatus != 1 {
                     continue;
                 }

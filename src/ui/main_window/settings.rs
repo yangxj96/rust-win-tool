@@ -1,4 +1,4 @@
-//! Settings page for persisted language and theme selection.
+//! 设置页面，提供持久化的语言和主题选项。
 
 use super::shared::*;
 use super::*;

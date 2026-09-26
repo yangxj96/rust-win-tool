@@ -1,13 +1,12 @@
-//! System tray icon.
+//! 系统托盘图标。
 //!
-//! GPUI has no tray support, so this creates a hidden message window that owns
-//! a `Shell_NotifyIcon` icon. Double clicking the icon shows the main window;
-//! right clicking opens a small menu (show / hide / exit).
+//! GPUI 不提供托盘支持，因此本模块会创建一个隐藏的消息窗口，并由它管理
+//! `Shell_NotifyIcon` 图标。双击图标会显示主窗口，右键单击会打开显示、隐藏和退出菜单。
 //!
-//! Only the visibility of the main window is driven from here; "exit" goes
-//! through the normal `WM_CLOSE` handling so GPUI can shut down cleanly.
+//! 本模块只负责控制主窗口的可见性；“退出”操作会交由常规 `WM_CLOSE` 流程处理，
+//! 以便 GPUI 正常关闭。
 
-/// Tray menu labels, resolved from the current language.
+/// 根据当前语言解析托盘菜单项的文本。
 pub struct TrayLabels {
     pub show: String,
     pub hide: String,
@@ -86,8 +85,7 @@ mod platform {
             }
             TRAY_WINDOW.store(tray_window as isize, Ordering::SeqCst);
 
-            // Resource id 1 is the icon embedded by the build script; fall back
-            // to the generic application icon if it cannot be loaded.
+            // 资源 ID 1 是构建脚本嵌入的图标；加载失败时回退到通用应用程序图标。
             let mut icon = LoadIconW(instance, 1 as *const u16);
             if icon.is_null() {
                 icon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
@@ -154,8 +152,7 @@ mod platform {
         }
     }
 
-    /// Hide the main window, used when the close button is pressed so the app
-    /// keeps running in the tray.
+    /// 隐藏主窗口。用户点击关闭按钮时调用，使应用继续在系统托盘中运行。
     pub fn hide_main_window() {
         hide_main();
     }
@@ -188,7 +185,7 @@ mod platform {
 
             let mut point = POINT { x: 0, y: 0 };
             GetCursorPos(&mut point);
-            // Required so the menu closes when clicking elsewhere.
+            // 必须启用此标志，才能在用户点击菜单外部时关闭菜单。
             SetForegroundWindow(owner);
             let command = TrackPopupMenu(
                 menu,

@@ -1,6 +1,6 @@
-//! Tool catalog and views for monitoring, network, startup, processes, and system info.
+//! 工具目录，以及监视器、网络、启动项、进程和系统信息页面。
 //!
-//! Blocking refresh and diagnostic work stays in GPUI background tasks.
+//! 刷新和诊断等阻塞操作继续放在 GPUI 后台任务中执行。
 
 use super::shared::*;
 use super::*;
@@ -1223,8 +1223,8 @@ impl MainWindow {
         let Some((pid, _name)) = self.pending_kill.take() else {
             return;
         };
-        // If the port lookup dialog is showing results, refresh them once the
-        // process is gone so the freed port disappears from the list.
+        // 如果端口查询对话框正在显示结果，进程结束后重新查询，使已释放的端口从列表中
+        // 消失。
         let port = self.state.read(cx).port_lookup_port();
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
@@ -1360,8 +1360,7 @@ impl MainWindow {
         .detach();
     }
 
-    /// Modal that looks up which process is using a given local port and lets
-    /// the user terminate it.
+    /// 查询本地端口被哪个进程占用，并允许用户结束该进程的对话框。
     pub(super) fn render_port_lookup_dialog(
         &self,
         window: &Window,

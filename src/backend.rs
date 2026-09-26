@@ -1,8 +1,7 @@
-//! Blocking and platform-facing operations called from GPUI background tasks.
+//! 供 GPUI 后台任务调用的阻塞式平台操作。
 //!
-//! Functions here translate native service, registry, and system-information
-//! results into application types; callers must keep blocking calls off the UI
-//! event loop.
+//! 本模块将原生服务、注册表和系统信息结果转换为应用数据类型；调用方必须把
+//! 阻塞操作放在界面事件循环之外执行。
 
 use crate::service::{ManagedService, ServiceError, ServiceInfo};
 use serde_json::Value;
@@ -17,10 +16,9 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-/// Errors returned by blocking backend operations.
+/// 阻塞式后端操作返回的错误类型。
 ///
-/// Service errors retain the source wording because `AppState` maps those
-/// stable keywords to localized UI messages.
+/// 服务错误保留稳定的原始关键词，`AppState` 会据此映射为本地化界面提示。
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BackendError {
     #[error("service operation failed: {0}")]
@@ -37,7 +35,7 @@ pub enum BackendError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// Snapshot of the system fields displayed by the information tool.
+/// 系统信息工具展示的系统字段快照。
 pub struct SystemInfo {
     pub os: String,
     pub version: String,
@@ -49,32 +47,32 @@ pub struct SystemInfo {
     pub ram: String,
 }
 
-/// Enumerate services from the native Service Control Manager.
+/// 通过 Windows 服务控制管理器枚举服务。
 pub fn list_services() -> Result<Vec<ServiceInfo>, BackendError> {
     crate::service::list_all_services().map_err(service_error)
 }
 
-/// Query a service's current status by its internal service name.
+/// 根据服务内部名称查询当前状态。
 pub fn service_status(name: &str) -> Result<String, BackendError> {
     crate::service::get_service_status(name).map_err(service_error)
 }
 
-/// Start a service; permission and state errors are returned to the caller.
+/// 启动服务；权限不足或服务状态不允许时返回错误。
 pub fn start_service(name: &str) -> Result<(), BackendError> {
     crate::service::start_service(name).map_err(service_error)
 }
 
-/// Stop a service; permission and dependency errors are returned to the caller.
+/// 停止服务；权限不足或依赖关系不允许时返回错误。
 pub fn stop_service(name: &str) -> Result<(), BackendError> {
     crate::service::stop_service(name).map_err(service_error)
 }
 
-/// Read the service configuration and runtime details for the detail dialog.
+/// 读取服务配置和运行时信息，供服务详情对话框展示。
 pub fn service_details(name: &str) -> Result<crate::service::ServiceDetails, BackendError> {
     crate::service::get_service_details(name).map_err(service_error)
 }
 
-/// Change the persisted startup mode through the Service Control Manager.
+/// 通过服务控制管理器修改服务启动类型。
 pub fn set_service_start_type(
     name: &str,
     start_type: crate::service::StartType,
@@ -82,7 +80,7 @@ pub fn set_service_start_type(
     crate::service::set_service_start_type(name, start_type).map_err(service_error)
 }
 
-/// Write the selected managed services using the existing JSON schema.
+/// 按现有 JSON 结构写出指定的托管服务列表。
 pub fn export_managed_services(
     path: &Path,
     services: &[ManagedService],
@@ -92,42 +90,41 @@ pub fn export_managed_services(
     std::fs::write(path, json).map_err(|error| BackendError::Command(error.to_string()))
 }
 
-/// Read managed services from an export file; the caller replaces its list.
+/// 从导出文件读取托管服务；调用方负责用结果替换当前列表。
 pub fn import_managed_services(path: &Path) -> Result<Vec<ManagedService>, BackendError> {
     let text =
         std::fs::read_to_string(path).map_err(|error| BackendError::Command(error.to_string()))?;
     serde_json::from_str(&text).map_err(|error| BackendError::Parse(error.to_string()))
 }
 
-/// Enumerate running processes for the process tool.
+/// 枚举进程管理工具所需的运行中进程。
 pub fn list_processes() -> Result<Vec<crate::process::ProcessInfo>, BackendError> {
     Ok(crate::process::list())
 }
 
-/// Terminate a process by PID; callers must use the existing confirmation flow.
+/// 根据 PID 结束进程；调用方必须沿用现有的二次确认流程。
 pub fn terminate_process(pid: u32) -> Result<(), BackendError> {
     crate::process::terminate(pid).map_err(BackendError::Command)
 }
 
-/// Find processes and endpoints associated with a local TCP/UDP port.
+/// 查找占用指定本地 TCP/UDP 端口的进程和网络端点。
 pub fn lookup_port(port: u16) -> Result<Vec<crate::port::PortEntry>, BackendError> {
     Ok(crate::port::lookup(port))
 }
 
-/// Collect one system metrics sample for the live monitor.
+/// 为实时监视器采集一份系统指标数据。
 pub fn sample_metrics() -> Result<crate::monitor::Metrics, BackendError> {
     Ok(crate::monitor::sample())
 }
 
-/// Enumerate supported startup entries from the current user's and machine's locations.
+/// 从当前用户和计算机范围内的受支持位置枚举启动项。
 pub fn list_startup() -> Result<Vec<crate::startup::StartupItem>, BackendError> {
     Ok(crate::startup::list())
 }
 
-/// Run a command through `cmd.exe`, capturing stdout and stderr.
+/// 通过 `cmd.exe` 运行命令并捕获标准输出和标准错误。
 ///
-/// On Windows the child console window is suppressed. This call blocks and
-/// must remain on a GPUI background task.
+/// 在 Windows 上隐藏子进程控制台窗口。此调用会阻塞，必须放在 GPUI 后台任务中。
 pub fn run_command(command: &str) -> Result<String, BackendError> {
     let mut cmd = Command::new("cmd");
     cmd.args(["/C", command]);
@@ -148,10 +145,10 @@ pub fn run_command(command: &str) -> Result<String, BackendError> {
     Ok(text.trim().to_string())
 }
 
-/// Run a user script by writing the body to a temporary file and invoking the
-/// matching interpreter. Writing a file keeps multi-line scripts intact without
-/// any shell quoting. The child process inherits the application's current user
-/// and elevation context.
+/// 将用户脚本写入临时文件，再调用对应解释器执行。
+///
+/// 使用临时文件可以完整保留多行内容，避免 shell 引号转义问题。子进程继承应用
+/// 当前用户身份和提权上下文。
 pub fn run_script(kind: ScriptKind, content: &str) -> Result<String, BackendError> {
     #[cfg(windows)]
     {
@@ -207,7 +204,7 @@ pub fn run_script(kind: ScriptKind, content: &str) -> Result<String, BackendErro
     }
 }
 
-/// Console programs emit text in the OEM code page, not UTF-8.
+/// 控制台程序输出使用 OEM 代码页，而不是 UTF-8。
 #[cfg(windows)]
 fn decode_console(bytes: &[u8]) -> String {
     use windows_sys::Win32::Globalization::MultiByteToWideChar;
@@ -252,12 +249,12 @@ fn decode_console(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).to_string()
 }
 
-/// Flush the Windows DNS resolver cache using `ipconfig`.
+/// 使用 `ipconfig` 清空 Windows DNS 解析器缓存。
 pub fn flush_dns() -> Result<String, BackendError> {
     run_command("ipconfig /flushdns")
 }
 
-/// Enable or disable one supported startup entry in its existing registry/location scope.
+/// 在原有注册表或文件位置范围内启用或禁用一个受支持的启动项。
 pub fn set_startup_enabled(
     location: crate::startup::StartupLocation,
     value_name: &str,
@@ -267,7 +264,7 @@ pub fn set_startup_enabled(
 }
 
 #[derive(Debug, Clone)]
-/// Synchronous service action request; batch actions preserve input order.
+/// 同步服务操作请求；批量操作按输入顺序处理。
 pub enum ServiceOperation {
     Start(String),
     Stop(String),
@@ -277,16 +274,15 @@ pub enum ServiceOperation {
 }
 
 #[derive(Debug)]
-/// Status or error returned for one service in an operation batch.
+/// 批量操作中单个服务对应的状态或错误。
 pub struct ServiceOperationResult {
     pub name: String,
     pub status: Result<String, BackendError>,
 }
 
-/// Execute one service operation or a batch and return each resulting status.
+/// 执行单项或批量服务操作，并返回每个服务的最终状态。
 ///
-/// This performs synchronous Windows API calls; invoke it from a background
-/// task rather than the GPUI event loop.
+/// 此函数同步调用 Windows API，必须从后台任务调用，不能阻塞 GPUI 事件循环。
 pub fn execute_service_operation(operation: ServiceOperation) -> Vec<ServiceOperationResult> {
     match operation {
         ServiceOperation::Start(name) => vec![execute_one(&name, start_service)],
@@ -328,10 +324,9 @@ fn service_error(error: ServiceError) -> BackendError {
     BackendError::Service(error.to_string())
 }
 
-/// Fetch the system-information snapshot through hidden PowerShell execution.
+/// 通过隐藏的 PowerShell 进程获取系统信息快照。
 ///
-/// This operation blocks while CIM data is collected and must run off the UI
-/// event loop.
+/// 获取 CIM 数据期间会阻塞，必须在界面事件循环之外执行。
 pub fn fetch_system_info() -> Result<SystemInfo, BackendError> {
     let script = r#"
         [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -367,7 +362,7 @@ pub fn fetch_system_info() -> Result<SystemInfo, BackendError> {
     parse_system_info_json(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// Parse the normalized JSON object emitted by the system-information script.
+/// 解析系统信息脚本输出的标准化 JSON 对象。
 pub fn parse_system_info_json(input: &str) -> Result<SystemInfo, BackendError> {
     let value: Value =
         serde_json::from_str(input).map_err(|error| BackendError::Parse(error.to_string()))?;
@@ -397,7 +392,7 @@ fn value_as_text(value: Option<&Value>) -> String {
 }
 
 #[cfg(windows)]
-/// Reset Navicat state by removing its allowlisted registry keys.
+/// 删除白名单中的 Navicat 注册表项以重置其状态。
 pub fn reset_navicat() -> Result<u32, BackendError> {
     use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
     use winreg::RegKey;
@@ -421,7 +416,7 @@ pub fn reset_navicat() -> Result<u32, BackendError> {
     for key_name in clsid.enum_keys().filter_map(Result::ok) {
         let full_path = format!(r"{}\{}", clsid_path, key_name);
         if should_delete_key(&hku, &full_path) {
-            // Copy the key aside before removing it so the change is reversible.
+            // 先备份注册表项，再执行删除，以便撤销这项更改。
             let backup_path = format!(r"{}\{}", backup_root, key_name);
             let _ = copy_key_tree(&hku, &full_path, &backup_path);
             hku.delete_subkey_all(&full_path)
@@ -438,7 +433,7 @@ pub fn reset_navicat() -> Result<u32, BackendError> {
     Ok(deleted)
 }
 
-/// Recursively copy a registry key so a cleanup can be undone.
+/// 递归复制注册表项，以便清理操作可以撤销。
 #[cfg(windows)]
 fn copy_key_tree(
     root: &winreg::RegKey,
@@ -483,7 +478,7 @@ fn should_delete_key(hku: &winreg::RegKey, path: &str) -> bool {
 }
 
 #[cfg(not(windows))]
-/// Report that the Windows-only Navicat registry reset is unavailable.
+/// 返回错误，说明 Navicat 注册表重置仅支持 Windows。
 pub fn reset_navicat() -> Result<u32, BackendError> {
     Err(BackendError::UnsupportedPlatform)
 }

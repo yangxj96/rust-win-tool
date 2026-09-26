@@ -1,9 +1,9 @@
-//! User-defined scripts persisted next to the other configuration.
+//! 与其他配置一同持久化保存的用户自定义脚本。
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Interpreter used to run a custom script.
+/// 运行自定义脚本时使用的解释器。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ScriptKind {
@@ -17,7 +17,7 @@ pub struct CustomScript {
     pub name: String,
     #[serde(default)]
     pub kind: ScriptKind,
-    /// Script body; may span multiple lines.
+    /// 脚本正文，可以包含多行内容。
     pub command: String,
 }
 

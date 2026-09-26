@@ -1,13 +1,13 @@
-//! Native open/save file dialogs.
+//! Windows 原生打开和保存文件对话框。
 
 use std::path::PathBuf;
 
-/// Ask the user to pick an existing file.
+/// 打开文件选择对话框，请用户选择一个已存在的文件。
 pub fn open_file() -> Option<PathBuf> {
     platform::dialog(false, "")
 }
 
-/// Ask the user for a destination file, pre-filled with `default_name`.
+/// 打开文件保存对话框，并将 `default_name` 预填为目标文件名。
 pub fn save_file(default_name: &str) -> Option<PathBuf> {
     platform::dialog(true, default_name)
 }

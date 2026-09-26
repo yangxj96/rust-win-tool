@@ -1,4 +1,4 @@
-//! Main window chrome: titlebar, navigation sidebar, content header, and scrollbars.
+//! 主窗口外壳：标题栏、导航侧边栏、内容区标题和滚动条。
 
 use super::*;
 
@@ -223,8 +223,8 @@ impl MainWindow {
             }))
     }
 
-    /// Custom scrollbar: GPUI 0.2.2 does not paint scrollbars, so the track and
-    /// thumb are drawn here and driven by a `ScrollHandle`.
+    /// GPUI 0.2.2 不会绘制滚动条，因此这里使用 `ScrollHandle` 绘制并驱动轨道和
+    /// 滑块。
     pub(super) fn render_scrollbar(
         &self,
         handle: &ScrollHandle,
@@ -291,7 +291,7 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// Keeps custom scrollbars in sync while the user scrolls with the wheel.
+    /// 用户滚动鼠标滚轮时同步更新自定义滚动条。
     pub(super) fn on_scrolled(
         &mut self,
         _event: &gpui::ScrollWheelEvent,

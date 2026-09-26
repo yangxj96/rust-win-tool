@@ -1,7 +1,6 @@
-//! Custom script list, editor, execution callbacks, and output dialog.
+//! 自定义脚本列表、编辑器、执行回调和输出对话框。
 //!
-//! Script persistence and execution privileges remain defined by the existing
-//! app and backend layers.
+//! 脚本持久化和执行权限仍由现有应用状态与后端模块决定。
 
 use super::shared::*;
 use super::*;
@@ -489,8 +488,7 @@ impl MainWindow {
         self.update_state(cx, |state| state.close_script_output());
     }
 
-    /// Modal that shows the output of the most recent script run. Closing it
-    /// leaves the script list unobstructed.
+    /// 显示最近一次脚本运行结果的对话框。关闭后返回脚本列表。
     pub(super) fn render_script_output(&self, state: &AppState, cx: &Context<Self>) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
