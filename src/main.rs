@@ -11,6 +11,7 @@ mod file_dialog;
 mod i18n;
 mod logging;
 mod monitor;
+mod network;
 mod process;
 mod theme;
 mod tray;

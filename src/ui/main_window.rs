@@ -19,10 +19,11 @@ use crate::theme::{StatusColors, ThemeColors};
 use crate::ui::{components, input};
 use app_service::StartType;
 
-const TOOLS: [(&str, &str); 3] = [
+const TOOLS: [(&str, &str); 4] = [
     ("tool_sysinfo", "tool_sysinfo_desc"),
     ("tool_processes", "tool_processes_desc"),
     ("tool_monitor", "tool_monitor_desc"),
+    ("tool_network", "tool_network_desc"),
 ];
 
 const SERVICE_NAME_COLUMN_WIDTH: f32 = 180.;
@@ -41,6 +42,7 @@ pub struct MainWindow {
     pub(crate) focus_handle: FocusHandle,
     search_focus: FocusHandle,
     service_search_focus: FocusHandle,
+    net_host_focus: FocusHandle,
     service_scroll: ScrollHandle,
     dialog_scroll: ScrollHandle,
     sysinfo_scroll: ScrollHandle,
@@ -69,6 +71,22 @@ struct ScrollbarDrag {
 /// Invisible preview view for the scrollbar drag interaction.
 struct ScrollbarDragPreview;
 
+/// Which editable text field currently owns the platform input handler.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TextTarget {
+    Dialog,
+    ServiceSearch,
+    NetHost,
+}
+
+/// Network diagnostic action.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NetCheck {
+    Ping,
+    Dns,
+    Port,
+}
+
 /// Parameters for the shared confirmation dialog.
 struct ConfirmDialog {
     title: &'static str,
@@ -94,6 +112,7 @@ impl MainWindow {
             focus_handle: cx.focus_handle(),
             search_focus: cx.focus_handle(),
             service_search_focus: cx.focus_handle(),
+            net_host_focus: cx.focus_handle(),
             service_scroll: ScrollHandle::new(),
             dialog_scroll: ScrollHandle::new(),
             sysinfo_scroll: ScrollHandle::new(),
@@ -107,6 +126,16 @@ impl MainWindow {
         }
     }
 
+    fn text_target(&self, window: &Window) -> TextTarget {
+        if self.service_search_focus.is_focused(window) {
+            TextTarget::ServiceSearch
+        } else if self.net_host_focus.is_focused(window) {
+            TextTarget::NetHost
+        } else {
+            TextTarget::Dialog
+        }
+    }
+
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         // Text insertion is owned by the platform input handler (WM_CHAR / IME).
         // Backspace is filtered out of WM_CHAR, so handle it here for whichever
@@ -114,10 +143,18 @@ impl MainWindow {
         if input::text_editing_input(event) != Some(input::TextEditingInput::Backspace) {
             return;
         }
-        if self.state.read(cx).show_add_dialog() {
-            self.update_state(cx, |state| state.add_dialog_backspace());
-        } else if self.service_search_focus.is_focused(window) {
-            self.update_state(cx, |state| state.service_search_backspace());
+        match self.text_target(window) {
+            TextTarget::ServiceSearch => {
+                self.update_state(cx, |state| state.service_search_backspace());
+            }
+            TextTarget::NetHost => {
+                self.update_state(cx, |state| state.net_host_backspace());
+            }
+            TextTarget::Dialog => {
+                if self.state.read(cx).show_add_dialog() {
+                    self.update_state(cx, |state| state.add_dialog_backspace());
+                }
+            }
         }
     }
 
@@ -1322,11 +1359,12 @@ impl MainWindow {
             .children(notice)
     }
 
-    fn render_tools_page(&self, state: &AppState, cx: &Context<Self>) -> Div {
+    fn render_tools_page(&self, window: &Window, state: &AppState, cx: &Context<Self>) -> Div {
         if state.tool_detail_active() {
             return match state.tools_selected() {
                 1 => self.render_process_list(state, cx),
                 2 => self.render_monitor(state, cx),
+                3 => self.render_network(window, state, cx),
                 _ => self.render_system_info(state, cx),
             };
         }
@@ -1656,6 +1694,162 @@ impl MainWindow {
             .p_6()
             .child(toolbar)
             .child(body)
+    }
+
+    fn render_network(&self, window: &Window, state: &AppState, cx: &Context<Self>) -> Div {
+        let translations = state.t();
+        let colors = state.theme_colors();
+
+        let host_focused = self.net_host_focus.is_focused(window);
+        let host_input = {
+            let input_entity = cx.entity();
+            let input_focus = self.net_host_focus.clone();
+            canvas(
+                |_, _, _| (),
+                move |bounds, _, window, cx| {
+                    window.handle_input(
+                        &input_focus,
+                        ElementInputHandler::new(bounds, input_entity.clone()),
+                        cx,
+                    );
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
+        let host_field = components::search_field(
+            state.net_host(),
+            state.net_host_marked(),
+            translations.net_placeholder,
+            colors,
+            host_focused,
+        )
+        .relative()
+        .track_focus(&self.net_host_focus)
+        .cursor_text()
+        .focus(|style| style.border_color(components::color(colors.brand.primary)))
+        .id("net-host")
+        .on_click(cx.listener(Self::focus_net_host))
+        .child(host_input);
+
+        let ports = [80u16, 443, 3306, 5432, 6379];
+        let port_row = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .w_full()
+            .child(
+                div()
+                    .w(px(72.))
+                    .flex_shrink_0()
+                    .text_sm()
+                    .text_color(components::color(colors.fg.muted))
+                    .child(translations.net_port_label),
+            )
+            .children(ports.into_iter().map(|port| {
+                let selected = state.net_port() == port;
+                segment(&port.to_string(), selected, colors, net_port_id(port)).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.update_state(cx, move |state| state.set_net_port(port))
+                    }),
+                )
+            }));
+
+        let toolbar = div().flex().items_center().w_full().child(
+            components::button(
+                translations.sysinfo_back,
+                colors,
+                components::ButtonVariant::Secondary,
+            )
+            .id("net-back")
+            .on_click(cx.listener(|this, _event, _window, cx| {
+                this.update_state(cx, |state| state.close_tool_detail());
+            })),
+        );
+
+        let actions = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                components::button(
+                    translations.net_ping,
+                    colors,
+                    components::ButtonVariant::Primary,
+                )
+                .id("net-ping")
+                .on_click(cx.listener(Self::net_ping_clicked)),
+            )
+            .child(
+                components::button(
+                    translations.net_dns,
+                    colors,
+                    components::ButtonVariant::Secondary,
+                )
+                .id("net-dns")
+                .on_click(cx.listener(Self::net_dns_clicked)),
+            )
+            .child(
+                components::button(
+                    translations.net_check_port,
+                    colors,
+                    components::ButtonVariant::Secondary,
+                )
+                .id("net-port")
+                .on_click(cx.listener(Self::net_port_clicked)),
+            );
+
+        let result_card = components::card(colors)
+            .flex()
+            .flex_col()
+            .gap_2()
+            .w_full()
+            .flex_1()
+            .p_4()
+            .child(components::card_title(translations.tool_network, colors))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(components::color(if state.net_loading() {
+                        colors.fg.muted
+                    } else {
+                        colors.fg.default
+                    }))
+                    .child(if state.net_loading() {
+                        translations.net_running.to_string()
+                    } else {
+                        state.net_result().unwrap_or_default().to_string()
+                    }),
+            );
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .size_full()
+            .p_6()
+            .child(toolbar)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .w_full()
+                    .child(
+                        div()
+                            .w(px(72.))
+                            .flex_shrink_0()
+                            .text_sm()
+                            .text_color(components::color(colors.fg.muted))
+                            .child(translations.net_host_label),
+                    )
+                    .child(div().flex_1().min_w(px(0.)).child(host_field)),
+            )
+            .child(port_row)
+            .child(actions)
+            .child(result_card)
     }
 
     fn render_process_list(&self, state: &AppState, cx: &Context<Self>) -> Div {
@@ -2664,6 +2858,79 @@ impl MainWindow {
         cx.notify();
     }
 
+    fn focus_net_host(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.net_host_focus);
+        cx.notify();
+    }
+
+    fn net_ping_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.start_net_check(NetCheck::Ping, cx);
+    }
+
+    fn net_dns_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.start_net_check(NetCheck::Dns, cx);
+    }
+
+    fn net_port_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.start_net_check(NetCheck::Port, cx);
+    }
+
+    fn start_net_check(&mut self, kind: NetCheck, cx: &mut Context<Self>) {
+        let (host, port, translations) = {
+            let state = self.state.read(cx);
+            (
+                state.net_host().trim().to_string(),
+                state.net_port(),
+                state.t(),
+            )
+        };
+        if host.is_empty() {
+            let message = translations.net_host_required.to_string();
+            self.update_state(cx, move |state| state.set_net_result(message));
+            return;
+        }
+        self.update_state(cx, |state| state.begin_net_check());
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_spawn(async move {
+                    match kind {
+                        NetCheck::Ping => crate::network::ping(&host, 4, 1000).map(|summary| {
+                            format!(
+                                "{}/{}  {} ms",
+                                summary.received, summary.sent, summary.avg_ms
+                            )
+                        }),
+                        NetCheck::Dns => crate::network::resolve(&host)
+                            .map(|ips| crate::network::format_addresses(&ips)),
+                        NetCheck::Port => {
+                            crate::network::check_port(&host, port, Duration::from_secs(3)).map(
+                                |open| {
+                                    if open {
+                                        translations.net_open.to_string()
+                                    } else {
+                                        translations.net_closed.to_string()
+                                    }
+                                },
+                            )
+                        }
+                    }
+                })
+                .await;
+            let message = match result {
+                Ok(message) => message,
+                Err(error) => error,
+            };
+            state
+                .update(cx, |state, cx| {
+                    state.set_net_result(message);
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
     fn open_service_detail(&mut self, name: String, cx: &mut Context<Self>) {
         let lookup = name.clone();
         self.update_state(cx, move |state| state.begin_service_detail(&name));
@@ -3570,7 +3837,7 @@ impl Render for MainWindow {
         let state = self.state.read(cx);
         let page = match state.current_view() {
             View::Service => self.render_service_page(window, state, cx),
-            View::Tools => self.render_tools_page(state, cx),
+            View::Tools => self.render_tools_page(window, state, cx),
             View::Cleanup => self.render_cleanup_page(state, cx),
             View::Scripts => self.render_scripts_page(state, cx),
             View::Settings => self.render_settings_page(state, cx),
@@ -3630,12 +3897,12 @@ impl EntityInputHandler for MainWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        let service = self.service_search_focus.is_focused(window);
+        let target = self.text_target(window);
         let state = self.state.read(cx);
-        let text = if service {
-            state.service_search_text_range(range_utf16.clone())
-        } else {
-            state.add_dialog_text_range(range_utf16.clone())
+        let text = match target {
+            TextTarget::ServiceSearch => state.service_search_text_range(range_utf16.clone()),
+            TextTarget::NetHost => state.net_host_text_range(range_utf16.clone()),
+            TextTarget::Dialog => state.add_dialog_text_range(range_utf16.clone()),
         };
         *adjusted_range = Some(range_utf16);
         Some(text)
@@ -3647,11 +3914,12 @@ impl EntityInputHandler for MainWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
+        let target = self.text_target(window);
         let state = self.state.read(cx);
-        let cursor = if self.service_search_focus.is_focused(window) {
-            state.service_search_text_utf16_len()
-        } else {
-            state.add_dialog_text_utf16_len()
+        let cursor = match target {
+            TextTarget::ServiceSearch => state.service_search_text_utf16_len(),
+            TextTarget::NetHost => state.net_host_text_utf16_len(),
+            TextTarget::Dialog => state.add_dialog_text_utf16_len(),
         };
         Some(UTF16Selection {
             range: cursor..cursor,
@@ -3664,22 +3932,21 @@ impl EntityInputHandler for MainWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
+        let target = self.text_target(window);
         let state = self.state.read(cx);
-        if self.service_search_focus.is_focused(window) {
-            state.service_search_marked_range()
-        } else {
-            state.add_dialog_marked_range()
+        match target {
+            TextTarget::ServiceSearch => state.service_search_marked_range(),
+            TextTarget::NetHost => state.net_host_marked_range(),
+            TextTarget::Dialog => state.add_dialog_marked_range(),
         }
     }
 
     fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let service = self.service_search_focus.is_focused(window);
-        self.update_state(cx, move |state| {
-            if service {
-                state.service_search_unmark();
-            } else {
-                state.add_dialog_unmark();
-            }
+        let target = self.text_target(window);
+        self.update_state(cx, move |state| match target {
+            TextTarget::ServiceSearch => state.service_search_unmark(),
+            TextTarget::NetHost => state.net_host_unmark(),
+            TextTarget::Dialog => state.add_dialog_unmark(),
         });
     }
 
@@ -3691,19 +3958,20 @@ impl EntityInputHandler for MainWindow {
         cx: &mut Context<Self>,
     ) {
         let text = text.to_string();
-        let service = self.service_search_focus.is_focused(window);
-        self.update_state(cx, move |state| {
-            if service {
-                match replacement_range {
-                    Some(range) => state.service_search_replace_range(range, &text),
-                    None => state.service_search_commit_text(&text),
-                }
-            } else {
-                match replacement_range {
-                    Some(range) => state.add_dialog_replace_range(range, &text),
-                    None => state.add_dialog_commit_text(&text),
-                }
-            }
+        let target = self.text_target(window);
+        self.update_state(cx, move |state| match target {
+            TextTarget::ServiceSearch => match replacement_range {
+                Some(range) => state.service_search_replace_range(range, &text),
+                None => state.service_search_commit_text(&text),
+            },
+            TextTarget::NetHost => match replacement_range {
+                Some(range) => state.net_host_replace_range(range, &text),
+                None => state.net_host_commit_text(&text),
+            },
+            TextTarget::Dialog => match replacement_range {
+                Some(range) => state.add_dialog_replace_range(range, &text),
+                None => state.add_dialog_commit_text(&text),
+            },
         });
     }
 
@@ -3716,14 +3984,21 @@ impl EntityInputHandler for MainWindow {
         cx: &mut Context<Self>,
     ) {
         let text = new_text.to_string();
-        let service = self.service_search_focus.is_focused(window);
-        self.update_state(cx, move |state| {
-            if service {
+        let target = self.text_target(window);
+        self.update_state(cx, move |state| match target {
+            TextTarget::ServiceSearch => {
                 if let Some(range) = range_utf16 {
                     state.service_search_replace_range(range, "");
                 }
                 state.service_search_set_marked(&text);
-            } else {
+            }
+            TextTarget::NetHost => {
+                if let Some(range) = range_utf16 {
+                    state.net_host_replace_range(range, "");
+                }
+                state.net_host_set_marked(&text);
+            }
+            TextTarget::Dialog => {
                 if let Some(range) = range_utf16 {
                     state.add_dialog_replace_range(range, "");
                 }
@@ -3864,6 +4139,17 @@ fn status_colors(status: ServiceStatus, colors: &ThemeColors) -> &StatusColors {
     }
 }
 
+fn net_port_id(port: u16) -> &'static str {
+    match port {
+        80 => "net-port-80",
+        443 => "net-port-443",
+        3306 => "net-port-3306",
+        5432 => "net-port-5432",
+        6379 => "net-port-6379",
+        _ => "net-port-other",
+    }
+}
+
 fn service_sort_label(sort: ServiceSort, translations: &crate::i18n::Translations) -> &'static str {
     match sort {
         ServiceSort::Manual => translations.sort_manual,
@@ -3937,6 +4223,8 @@ fn tool_text(translations: &crate::i18n::Translations, key: &str) -> &'static st
         "tool_processes_desc" => translations.tool_processes_desc,
         "tool_monitor" => translations.tool_monitor,
         "tool_monitor_desc" => translations.tool_monitor_desc,
+        "tool_network" => translations.tool_network,
+        "tool_network_desc" => translations.tool_network_desc,
         _ => "",
     }
 }
@@ -4054,9 +4342,10 @@ mod tests {
 
     #[test]
     fn tools_catalog_lists_all_tools() {
-        assert_eq!(TOOLS.len(), 3);
+        assert_eq!(TOOLS.len(), 4);
         assert_eq!(TOOLS[0], ("tool_sysinfo", "tool_sysinfo_desc"));
         assert_eq!(TOOLS[1], ("tool_processes", "tool_processes_desc"));
         assert_eq!(TOOLS[2], ("tool_monitor", "tool_monitor_desc"));
+        assert_eq!(TOOLS[3], ("tool_network", "tool_network_desc"));
     }
 }

@@ -13,7 +13,7 @@ use crate::theme::{ThemeColors, DARK, LIGHT};
 
 pub use crate::backend::SystemInfo;
 
-const TOOLS_COUNT: usize = 3;
+const TOOLS_COUNT: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
@@ -236,6 +236,15 @@ pub struct CleanupRow {
     pub scan: Option<Scan>,
 }
 
+/// Network diagnostics page state.
+#[derive(Default)]
+pub struct NetState {
+    host: SearchText,
+    port: u16,
+    result: Option<String>,
+    loading: bool,
+}
+
 /// Live system monitor state: latest sample plus short histories for charts.
 #[derive(Default)]
 pub struct MonitorState {
@@ -314,6 +323,7 @@ pub struct AppState {
     processes_error: Option<String>,
     process_sort: ProcessSort,
     monitor: MonitorState,
+    network: NetState,
     /// Transient message shown after a refresh completes.
     refresh_notice: Option<String>,
 }
@@ -363,6 +373,12 @@ impl AppState {
             processes_error: None,
             process_sort: ProcessSort::Memory,
             monitor: MonitorState::default(),
+            network: NetState {
+                host: SearchText::default(),
+                port: 80,
+                result: None,
+                loading: false,
+            },
             refresh_notice: None,
         }
     }
@@ -721,6 +737,74 @@ impl AppState {
         self.monitor.latest = Some(metrics);
     }
 
+    pub fn net_host(&self) -> &str {
+        self.network.host.text.as_str()
+    }
+
+    pub fn net_host_marked(&self) -> &str {
+        self.network.host.marked.as_str()
+    }
+
+    pub fn net_host_text_utf16_len(&self) -> usize {
+        self.network.host.utf16_len()
+    }
+
+    pub fn net_host_marked_range(&self) -> Option<Range<usize>> {
+        self.network.host.marked_range()
+    }
+
+    pub fn net_host_text_range(&self, range: Range<usize>) -> String {
+        self.network.host.text_range(range)
+    }
+
+    pub fn net_host_replace_range(&mut self, range: Range<usize>, text: &str) {
+        self.network.host.replace_range(range, text);
+    }
+
+    pub fn net_host_commit_text(&mut self, text: &str) {
+        self.network.host.commit(text);
+    }
+
+    pub fn net_host_set_marked(&mut self, text: &str) {
+        self.network.host.set_marked(text);
+    }
+
+    pub fn net_host_unmark(&mut self) {
+        self.network.host.unmark();
+    }
+
+    pub fn net_host_backspace(&mut self) {
+        self.network.host.backspace();
+    }
+
+    pub fn net_port(&self) -> u16 {
+        self.network.port
+    }
+
+    pub fn set_net_port(&mut self, port: u16) {
+        self.network.port = port;
+    }
+
+    pub fn net_result(&self) -> Option<&str> {
+        self.network.result.as_deref()
+    }
+
+    pub fn net_loading(&self) -> bool {
+        self.network.loading
+    }
+
+    pub fn begin_net_check(&mut self) {
+        self.network.loading = true;
+        self.network.result = None;
+        self.operation_state = OperationState::LoadingSystemInfo;
+    }
+
+    pub fn set_net_result(&mut self, result: String) {
+        self.network.loading = false;
+        self.network.result = Some(result);
+        self.operation_state = OperationState::Idle;
+    }
+
     /// Process list ordered by the current sort setting.
     pub fn sorted_processes(&self) -> Vec<&ProcessInfo> {
         let mut list: Vec<&ProcessInfo> = self.processes.iter().collect();
@@ -1069,6 +1153,7 @@ impl AppState {
             2 => {
                 self.monitor.active = true;
             }
+            3 => {}
             _ => {}
         }
         true
@@ -1272,7 +1357,7 @@ mod tests {
     fn tools_are_selectable_up_to_the_catalog_size() {
         let mut state = AppState::new();
 
-        state.select_tool(3);
+        state.select_tool(4);
         assert_eq!(state.tools_selected(), 0);
 
         state.select_tool(2);
