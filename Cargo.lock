@@ -76,16 +76,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
-name = "app-service"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "ar_archive_writer"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4477,7 +4467,6 @@ dependencies = [
 name = "rust-win-tool"
 version = "0.1.0"
 dependencies = [
- "app-service",
  "gpui",
  "raw-window-handle",
  "serde",

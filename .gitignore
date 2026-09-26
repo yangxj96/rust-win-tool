@@ -19,3 +19,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Generated Superpowers documents; keep the folder guide tracked.
+/docs/superpowers/*
+!/docs/superpowers/READMIN.md

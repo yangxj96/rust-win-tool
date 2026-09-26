@@ -30,6 +30,7 @@ cargo test
 │   ├── process.rs              # Process listing, termination and PID name lookup
 │   ├── scripts.rs              # Custom script library persistence
 │   ├── startup.rs              # Startup item listing and toggling
+│   ├── service.rs              # Native Windows service management
 │   ├── tray.rs                 # System tray icon and menu (Shell_NotifyIcon)
 │   ├── i18n.rs                 # Internationalization (Language, Translations, ZH/EN)
 │   ├── theme.rs                # Framework-neutral theme colors
@@ -38,7 +39,6 @@ cargo test
 │       ├── main_window.rs      # GPUI root entity, pages and event handlers
 │       ├── components.rs       # Shared GPUI visual components
 │       └── input.rs            # Keyboard input policy
-└── lib/service/                # Windows service management via native Win32 API
 ```
 
 ## Architecture
@@ -76,4 +76,4 @@ cargo test
 - `serde` / `serde_json` — settings and service data compatibility
 - `thiserror` — backend error model
 - `winreg` — Windows registry cleanup
-- `app-service` — local Windows service management crate
+- `windows-sys` — native Windows API bindings, including Service Control Manager APIs

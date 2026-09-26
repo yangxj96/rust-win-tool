@@ -15,6 +15,7 @@ mod network;
 mod port;
 mod process;
 mod scripts;
+mod service;
 mod startup;
 mod theme;
 mod tray;

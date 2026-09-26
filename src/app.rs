@@ -1,4 +1,4 @@
-use app_service::{ManagedService, ServiceDetails, ServiceInfo, StartType};
+use crate::service::{ManagedService, ServiceDetails, ServiceInfo, StartType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -404,7 +404,7 @@ impl AppState {
         let data_file = app_dir.join("managed_services.json");
         let settings_file = app_dir.join("settings.json");
         let scripts_file = app_dir.join("scripts.json");
-        let managed_services = app_service::load_managed_services(&data_file);
+        let managed_services = crate::service::load_managed_services(&data_file);
         let custom_scripts = crate::scripts::load(&scripts_file);
         let settings = load_settings(&settings_file);
         Self {
@@ -1175,7 +1175,7 @@ impl AppState {
         self.service_statuses.remove(&name);
         self.service_known_statuses.remove(&name);
         self.service_messages.remove(&name);
-        app_service::save_managed_services(&self.data_file, &self.managed_services);
+        crate::service::save_managed_services(&self.data_file, &self.managed_services);
     }
 
     /// Replace the whole managed list (used by import) and persist it.
@@ -1184,7 +1184,7 @@ impl AppState {
         self.service_statuses.clear();
         self.service_known_statuses.clear();
         self.service_messages.clear();
-        app_service::save_managed_services(&self.data_file, &self.managed_services);
+        crate::service::save_managed_services(&self.data_file, &self.managed_services);
     }
 
     pub fn begin_add_dialog(&mut self) {
@@ -1325,7 +1325,7 @@ impl AppState {
             display_name: service.display_name.clone(),
             enabled: true,
         });
-        app_service::save_managed_services(&self.data_file, &self.managed_services);
+        crate::service::save_managed_services(&self.data_file, &self.managed_services);
         self.close_add_dialog();
         true
     }

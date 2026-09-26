@@ -1,4 +1,4 @@
-use app_service::{ManagedService, ServiceError, ServiceInfo};
+use crate::service::{ManagedService, ServiceError, ServiceInfo};
 use serde_json::Value;
 use std::path::Path;
 use std::process::Command;
@@ -39,30 +39,30 @@ pub struct SystemInfo {
 }
 
 pub fn list_services() -> Result<Vec<ServiceInfo>, BackendError> {
-    app_service::list_all_services().map_err(service_error)
+    crate::service::list_all_services().map_err(service_error)
 }
 
 pub fn service_status(name: &str) -> Result<String, BackendError> {
-    app_service::get_service_status(name).map_err(service_error)
+    crate::service::get_service_status(name).map_err(service_error)
 }
 
 pub fn start_service(name: &str) -> Result<(), BackendError> {
-    app_service::start_service(name).map_err(service_error)
+    crate::service::start_service(name).map_err(service_error)
 }
 
 pub fn stop_service(name: &str) -> Result<(), BackendError> {
-    app_service::stop_service(name).map_err(service_error)
+    crate::service::stop_service(name).map_err(service_error)
 }
 
-pub fn service_details(name: &str) -> Result<app_service::ServiceDetails, BackendError> {
-    app_service::get_service_details(name).map_err(service_error)
+pub fn service_details(name: &str) -> Result<crate::service::ServiceDetails, BackendError> {
+    crate::service::get_service_details(name).map_err(service_error)
 }
 
 pub fn set_service_start_type(
     name: &str,
-    start_type: app_service::StartType,
+    start_type: crate::service::StartType,
 ) -> Result<(), BackendError> {
-    app_service::set_service_start_type(name, start_type).map_err(service_error)
+    crate::service::set_service_start_type(name, start_type).map_err(service_error)
 }
 
 pub fn export_managed_services(

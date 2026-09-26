@@ -19,7 +19,7 @@ use crate::scripts::ScriptKind;
 use crate::startup::StartupLocation;
 use crate::theme::{StatusColors, ThemeColors};
 use crate::ui::{components, input};
-use app_service::StartType;
+use crate::service::StartType;
 
 const SCRIPTS: [(&str, &str); 2] = [
     ("script_reset_navicat", "script_reset_navicat_desc"),
@@ -5706,12 +5706,12 @@ mod tests {
         let state = cx.new(|_| {
             let mut state = AppState::new();
             state.begin_service_detail("Demo");
-            state.set_service_detail(Ok(app_service::ServiceDetails {
+            state.set_service_detail(Ok(crate::service::ServiceDetails {
                 name: "Demo".into(),
                 display_name: "Demo Service".into(),
                 description: "A demo service".into(),
                 status: "Running".into(),
-                start_type: app_service::StartType::Automatic,
+                start_type: crate::service::StartType::Automatic,
                 binary_path: r"C:\demo.exe".into(),
                 account: "LocalSystem".into(),
                 process_id: 1234,
