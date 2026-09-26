@@ -1,7 +1,7 @@
 //! System tray icon.
 //!
 //! GPUI has no tray support, so this creates a hidden message window that owns
-//! a `Shell_NotifyIcon` icon. Left clicking the icon shows the main window;
+//! a `Shell_NotifyIcon` icon. Double clicking the icon shows the main window;
 //! right clicking opens a small menu (show / hide / exit).
 //!
 //! Only the visibility of the main window is driven from here; "exit" goes
@@ -30,7 +30,7 @@ mod platform {
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, GetCursorPos,
         LoadIconW, RegisterClassW, SetForegroundWindow, ShowWindow, TrackPopupMenu,
         IDI_APPLICATION, MF_STRING, SW_HIDE, SW_RESTORE, SW_SHOW, TPM_BOTTOMALIGN, TPM_RETURNCMD,
-        TPM_RIGHTBUTTON, WM_CLOSE, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
+        TPM_RIGHTBUTTON, WM_CLOSE, WM_LBUTTONDBLCLK, WM_RBUTTONUP, WNDCLASSW,
     };
 
     const TRAY_CALLBACK: u32 = 0x8000 + 1; // WM_APP + 1
@@ -118,7 +118,7 @@ mod platform {
         match message {
             TRAY_CALLBACK => {
                 match lparam as u32 {
-                    WM_LBUTTONUP | WM_LBUTTONDBLCLK => show_main(),
+                    WM_LBUTTONDBLCLK => show_main(),
                     WM_RBUTTONUP => show_menu(window),
                     _ => {}
                 }
@@ -152,6 +152,12 @@ mod platform {
         if !window.is_null() {
             unsafe { ShowWindow(window, SW_HIDE) };
         }
+    }
+
+    /// Hide the main window, used when the close button is pressed so the app
+    /// keeps running in the tray.
+    pub fn hide_main_window() {
+        hide_main();
     }
 
     fn exit_app() {
@@ -220,7 +226,10 @@ mod platform {
 }
 
 #[cfg(windows)]
-pub use platform::install;
+pub use platform::{hide_main_window, install};
 
 #[cfg(not(windows))]
 pub fn install(_labels: TrayLabels, _main_window: *mut std::ffi::c_void) {}
+
+#[cfg(not(windows))]
+pub fn hide_main_window() {}

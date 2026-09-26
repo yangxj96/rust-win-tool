@@ -245,6 +245,90 @@ pub fn search_field(
         .child(contents)
 }
 
+/// Multi-line text area. Line breaks in `value` are rendered as separate rows
+/// so wrapped bodies stay readable and the caret sits at the end of the last
+/// line while focused.
+pub fn text_area(
+    value: &str,
+    marked: &str,
+    placeholder: &str,
+    colors: &ThemeColors,
+    focused: bool,
+    height: f32,
+) -> Div {
+    let caret = || {
+        gpui::div()
+            .w(px(1.5))
+            .h(px(16.))
+            .ml(px(1.))
+            .bg(color(colors.fg.default))
+            .with_animation(
+                "text-area-caret",
+                Animation::new(Duration::from_millis(1060)).repeat(),
+                |element, delta| element.opacity(if delta < 0.5 { 1.0 } else { 0.0 }),
+            )
+    };
+
+    let mut body = gpui::div().flex().flex_col().w_full();
+
+    if value.is_empty() && marked.is_empty() {
+        let mut line = gpui::div().flex().items_center().min_h(px(18.));
+        if focused {
+            line = line.child(caret());
+        }
+        line = line.child(
+            gpui::div()
+                .text_color(color(colors.fg.subtle))
+                .child(placeholder.to_string()),
+        );
+        body = body.child(line);
+    } else {
+        let parts: Vec<&str> = value.split('\n').collect();
+        let last = parts.len().saturating_sub(1);
+        for (index, part) in parts.iter().enumerate() {
+            let is_last = index == last;
+            let mut line = gpui::div().flex().items_center().w_full().min_h(px(18.));
+            if part.is_empty() {
+                line = line.child(gpui::div().child(" "));
+            } else {
+                line = line.child(
+                    gpui::div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .whitespace_normal()
+                        .text_color(color(colors.fg.default))
+                        .child((*part).to_string()),
+                );
+            }
+            if is_last {
+                if !marked.is_empty() {
+                    line = line.child(
+                        gpui::div()
+                            .text_color(color(colors.brand.primary))
+                            .underline()
+                            .child(marked.to_string()),
+                    );
+                }
+                if focused {
+                    line = line.child(caret());
+                }
+            }
+            body = body.child(line);
+        }
+    }
+
+    gpui::div()
+        .w_full()
+        .h(px(height))
+        .p_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(color(colors.border.strong))
+        .bg(color(colors.bg.canvas))
+        .overflow_hidden()
+        .child(body)
+}
+
 /// Small uppercase-ish section caption used above grouped content.
 pub fn section_label(text: impl Into<SharedString>, colors: &ThemeColors) -> Div {
     gpui::div()

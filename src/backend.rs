@@ -3,6 +3,8 @@ use serde_json::Value;
 use std::path::Path;
 use std::process::Command;
 
+use crate::scripts::ScriptKind;
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -112,6 +114,64 @@ pub fn run_command(command: &str) -> Result<String, BackendError> {
         return Err(BackendError::Command(text.trim().to_string()));
     }
     Ok(text.trim().to_string())
+}
+
+/// Run a user script by writing the body to a temporary file and invoking the
+/// matching interpreter. Writing a file keeps multi-line scripts intact without
+/// any shell quoting.
+pub fn run_script(kind: ScriptKind, content: &str) -> Result<String, BackendError> {
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+
+        let (extension, program, args): (&str, &str, &[&str]) = match kind {
+            ScriptKind::Cmd => (".cmd", "cmd", &["/C"]),
+            ScriptKind::PowerShell => (
+                ".ps1",
+                "powershell",
+                &["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"],
+            ),
+        };
+        let mut path = std::env::temp_dir();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0);
+        path.push(format!(
+            "rust-win-tool-{}-{}{}",
+            std::process::id(),
+            stamp,
+            extension
+        ));
+        {
+            let mut file = std::fs::File::create(&path)
+                .map_err(|error| BackendError::Command(error.to_string()))?;
+            file.write_all(content.as_bytes())
+                .map_err(|error| BackendError::Command(error.to_string()))?;
+        }
+        let mut cmd = Command::new(program);
+        cmd.args(args);
+        cmd.arg(&path);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let output = cmd.output();
+        let _ = std::fs::remove_file(&path);
+        let output = output.map_err(|error| BackendError::Command(error.to_string()))?;
+        let mut text = decode_console(&output.stdout);
+        let stderr = decode_console(&output.stderr);
+        if !stderr.trim().is_empty() {
+            text.push('\n');
+            text.push_str(&stderr);
+        }
+        if !output.status.success() {
+            return Err(BackendError::Command(text.trim().to_string()));
+        }
+        Ok(text.trim().to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = kind;
+        run_command(content)
+    }
 }
 
 /// Console programs emit text in the OEM code page, not UTF-8.

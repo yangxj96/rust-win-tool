@@ -15,6 +15,7 @@ use crate::app::{
 use crate::backend::{self, ServiceOperation};
 use crate::cleanup::{self, CleanupCategory, DeleteMode};
 use crate::i18n::Language;
+use crate::scripts::ScriptKind;
 use crate::startup::StartupLocation;
 use crate::theme::{StatusColors, ThemeColors};
 use crate::ui::{components, input};
@@ -50,10 +51,15 @@ pub struct MainWindow {
     search_focus: FocusHandle,
     service_search_focus: FocusHandle,
     net_host_focus: FocusHandle,
-    script_focus: FocusHandle,
+    script_name_focus: FocusHandle,
+    script_content_focus: FocusHandle,
     service_scroll: ScrollHandle,
     dialog_scroll: ScrollHandle,
     sysinfo_scroll: ScrollHandle,
+    process_scroll: ScrollHandle,
+    startup_scroll: ScrollHandle,
+    cleanup_scroll: ScrollHandle,
+    script_scroll: ScrollHandle,
     /// Managed service awaiting delete confirmation.
     pending_delete: Option<String>,
     /// Cleanup confirmation dialogs.
@@ -85,7 +91,8 @@ enum TextTarget {
     Dialog,
     ServiceSearch,
     NetHost,
-    ScriptCommand,
+    ScriptName,
+    ScriptContent,
 }
 
 /// Network diagnostic action.
@@ -122,10 +129,15 @@ impl MainWindow {
             search_focus: cx.focus_handle(),
             service_search_focus: cx.focus_handle(),
             net_host_focus: cx.focus_handle(),
-            script_focus: cx.focus_handle(),
+            script_name_focus: cx.focus_handle(),
+            script_content_focus: cx.focus_handle(),
             service_scroll: ScrollHandle::new(),
             dialog_scroll: ScrollHandle::new(),
             sysinfo_scroll: ScrollHandle::new(),
+            process_scroll: ScrollHandle::new(),
+            startup_scroll: ScrollHandle::new(),
+            cleanup_scroll: ScrollHandle::new(),
+            script_scroll: ScrollHandle::new(),
             pending_delete: None,
             pending_clean: false,
             pending_empty_bin: false,
@@ -141,8 +153,10 @@ impl MainWindow {
             TextTarget::ServiceSearch
         } else if self.net_host_focus.is_focused(window) {
             TextTarget::NetHost
-        } else if self.script_focus.is_focused(window) {
-            TextTarget::ScriptCommand
+        } else if self.script_name_focus.is_focused(window) {
+            TextTarget::ScriptName
+        } else if self.script_content_focus.is_focused(window) {
+            TextTarget::ScriptContent
         } else {
             TextTarget::Dialog
         }
@@ -151,19 +165,30 @@ impl MainWindow {
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         // Text insertion is owned by the platform input handler (WM_CHAR / IME).
         // Backspace is filtered out of WM_CHAR, so handle it here for whichever
-        // text field currently has focus.
+        // text field currently has focus. The multi-line script body also needs
+        // Enter to insert a line break instead of activating a button.
+        let target = self.text_target(window);
+        if event.keystroke.key == "enter" {
+            if target == TextTarget::ScriptContent {
+                self.update_state(cx, |state| state.script_dialog_content_newline());
+            }
+            return;
+        }
         if input::text_editing_input(event) != Some(input::TextEditingInput::Backspace) {
             return;
         }
-        match self.text_target(window) {
+        match target {
             TextTarget::ServiceSearch => {
                 self.update_state(cx, |state| state.service_search_backspace());
             }
             TextTarget::NetHost => {
                 self.update_state(cx, |state| state.net_host_backspace());
             }
-            TextTarget::ScriptCommand => {
-                self.update_state(cx, |state| state.script_command_backspace());
+            TextTarget::ScriptName => {
+                self.update_state(cx, |state| state.script_dialog_name_backspace());
+            }
+            TextTarget::ScriptContent => {
+                self.update_state(cx, |state| state.script_dialog_content_backspace());
             }
             TextTarget::Dialog => {
                 if self.state.read(cx).show_add_dialog() {
@@ -197,7 +222,16 @@ impl MainWindow {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
-        window.remove_window();
+        // Keep running in the tray; exit is available from the tray menu.
+        #[cfg(target_os = "windows")]
+        {
+            let _ = &window;
+            crate::tray::hide_main_window();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            window.remove_window();
+        }
     }
 
     fn update_state(&self, cx: &mut Context<Self>, update: impl FnOnce(&mut AppState) + 'static) {
@@ -554,23 +588,30 @@ impl MainWindow {
         }
         self.monitor_started = true;
         let state = self.state.clone();
-        cx.spawn(async move |_this, cx| loop {
+        cx.spawn(async move |this, cx| loop {
             let active = state
                 .read_with(cx, |state, _| state.monitor_active())
                 .unwrap_or(false);
-            if active {
-                let result = cx
-                    .background_spawn(async { backend::sample_metrics() })
-                    .await;
-                state
-                    .update(cx, |state, cx| {
-                        if let Ok(metrics) = result {
-                            state.push_metrics(metrics);
-                        }
-                        cx.notify();
+            if !active {
+                if let Some(this) = this.upgrade() {
+                    this.update(cx, |this, _cx| {
+                        this.monitor_started = false;
                     })
                     .ok();
+                }
+                break;
             }
+            let result = cx
+                .background_spawn(async { backend::sample_metrics() })
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    if let Ok(metrics) = result {
+                        state.push_metrics(metrics);
+                    }
+                    cx.notify();
+                })
+                .ok();
             Timer::after(Duration::from_millis(1000)).await;
         })
         .detach();
@@ -598,11 +639,11 @@ impl MainWindow {
             let state = self.state.read(cx);
             (state.scripts_selected(), state.t())
         };
-        let custom_command = if selected >= 2 {
+        let custom = if selected >= 2 {
             self.state
                 .read(cx)
-                .custom_script_command(selected - 2)
-                .map(str::to_string)
+                .custom_script(selected - 2)
+                .map(|script| (script.kind, script.command.clone()))
         } else {
             None
         };
@@ -618,8 +659,8 @@ impl MainWindow {
                                 .replace("{}", &deleted.to_string())
                         }),
                         1 => backend::flush_dns(),
-                        _ => match custom_command {
-                            Some(command) => backend::run_command(&command),
+                        _ => match custom {
+                            Some((kind, command)) => backend::run_script(kind, &command),
                             None => Ok(String::new()),
                         },
                     }
@@ -1354,6 +1395,7 @@ impl MainWindow {
                 .flex_col()
                 .w_full()
                 .flex_1()
+                .min_h(px(0.))
                 .overflow_hidden()
                 .id("service-table")
                 .child(header)
@@ -1362,6 +1404,7 @@ impl MainWindow {
                         .flex()
                         .w_full()
                         .flex_1()
+                        .min_h(px(0.))
                         .overflow_hidden()
                         .child(
                             div()
@@ -1369,7 +1412,7 @@ impl MainWindow {
                                 .flex_col()
                                 .flex_1()
                                 .min_w(px(0.))
-                                .h_full()
+                                .min_h(px(0.))
                                 .id("service-list")
                                 .overflow_y_scroll()
                                 .track_scroll(&self.service_scroll)
@@ -1508,6 +1551,7 @@ impl MainWindow {
                 .gap_3()
                 .w_full()
                 .flex_1()
+                .min_h(px(0.))
                 .children(rows)
                 .id("tool-list")
                 .overflow_y_scroll(),
@@ -1723,6 +1767,7 @@ impl MainWindow {
             div()
                 .flex()
                 .flex_1()
+                .min_h(px(0.))
                 .items_center()
                 .justify_center()
                 .text_color(components::color(colors.fg.muted))
@@ -1735,6 +1780,7 @@ impl MainWindow {
                 .gap_4()
                 .w_full()
                 .flex_1()
+                .min_h(px(0.))
                 .id("monitor-body")
                 .overflow_y_scroll()
                 .child(cpu_card)
@@ -1941,33 +1987,33 @@ impl MainWindow {
                 .on_click(cx.listener(Self::refresh_startup_clicked)),
             );
 
-        let body: AnyElement = if startup.loading {
+        let body: Div = if startup.loading {
             div()
                 .flex()
                 .flex_1()
+                .min_h(px(0.))
                 .items_center()
                 .justify_center()
                 .text_color(components::color(colors.fg.muted))
                 .child(translations.status_refreshing)
-                .into_any_element()
         } else if let Some(error) = startup.error.as_deref() {
             div()
                 .flex()
                 .flex_1()
+                .min_h(px(0.))
                 .items_center()
                 .justify_center()
                 .text_color(components::color(colors.danger.text))
                 .child(error.to_string())
-                .into_any_element()
         } else if startup.items.is_empty() {
             div()
                 .flex()
                 .flex_1()
+                .min_h(px(0.))
                 .items_center()
                 .justify_center()
                 .text_color(components::color(colors.fg.muted))
                 .child(translations.startup_empty)
-                .into_any_element()
         } else {
             let header = div()
                 .flex()
@@ -2077,19 +2123,38 @@ impl MainWindow {
                 .flex_col()
                 .w_full()
                 .flex_1()
+                .min_h(px(0.))
                 .overflow_hidden()
                 .child(header)
                 .child(
                     div()
                         .flex()
-                        .flex_col()
                         .w_full()
                         .flex_1()
-                        .id("startup-list")
-                        .overflow_y_scroll()
-                        .children(rows),
+                        .min_h(px(0.))
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .w_full()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .min_h(px(0.))
+                                .id("startup-list")
+                                .overflow_y_scroll()
+                                .track_scroll(&self.startup_scroll)
+                                .on_scroll_wheel(cx.listener(Self::on_scrolled))
+                                .children(rows),
+                        )
+                        .child(self.render_scrollbar(
+                            &self.startup_scroll,
+                            colors,
+                            cx,
+                            "startup-scrollbar",
+                            "startup-thumb",
+                        )),
                 )
-                .into_any_element()
         };
 
         div()
@@ -2180,33 +2245,33 @@ impl MainWindow {
             )
             .child(sort_control);
 
-        let body: AnyElement = if state.processes_loading() {
+        let body: Div = if state.processes_loading() {
             div()
                 .flex()
                 .flex_1()
+                .min_h(px(0.))
                 .items_center()
                 .justify_center()
                 .text_color(components::color(colors.fg.muted))
                 .child(translations.status_refreshing)
-                .into_any_element()
         } else if let Some(error) = state.processes_error() {
             div()
                 .flex()
                 .flex_1()
+                .min_h(px(0.))
                 .items_center()
                 .justify_center()
                 .text_color(components::color(colors.danger.text))
                 .child(error.to_string())
-                .into_any_element()
         } else if state.processes().is_empty() {
             div()
                 .flex()
                 .flex_1()
+                .min_h(px(0.))
                 .items_center()
                 .justify_center()
                 .text_color(components::color(colors.fg.muted))
                 .child(translations.proc_empty)
-                .into_any_element()
         } else {
             let header = div()
                 .flex()
@@ -2287,19 +2352,38 @@ impl MainWindow {
                 .flex_col()
                 .w_full()
                 .flex_1()
+                .min_h(px(0.))
                 .overflow_hidden()
                 .child(header)
                 .child(
                     div()
                         .flex()
-                        .flex_col()
                         .w_full()
                         .flex_1()
-                        .id("process-list")
-                        .overflow_y_scroll()
-                        .children(rows),
+                        .min_h(px(0.))
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .w_full()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .min_h(px(0.))
+                                .id("process-list")
+                                .overflow_y_scroll()
+                                .track_scroll(&self.process_scroll)
+                                .on_scroll_wheel(cx.listener(Self::on_scrolled))
+                                .children(rows),
+                        )
+                        .child(self.render_scrollbar(
+                            &self.process_scroll,
+                            colors,
+                            cx,
+                            "process-scrollbar",
+                            "process-thumb",
+                        )),
                 )
-                .into_any_element()
         };
 
         div()
@@ -2318,6 +2402,7 @@ impl MainWindow {
         let content = if state.system_info_loading() {
             div()
                 .flex_1()
+                .min_h(px(0.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -2341,6 +2426,7 @@ impl MainWindow {
                 .flex()
                 .w_full()
                 .flex_1()
+                .min_h(px(0.))
                 .overflow_hidden()
                 .id("system-info-scroll")
                 .child(
@@ -2350,7 +2436,7 @@ impl MainWindow {
                         .gap_4()
                         .flex_1()
                         .min_w(px(0.))
-                        .h_full()
+                        .min_h(px(0.))
                         .id("system-info-groups")
                         .overflow_y_scroll()
                         .track_scroll(&self.sysinfo_scroll)
@@ -2424,12 +2510,14 @@ impl MainWindow {
         let translations = state.t();
         let colors = state.theme_colors();
         let cleanup = state.cleanup();
+        let busy = cleanup.scanning || cleanup.cleaning;
 
         let toolbar = div()
             .flex()
             .items_center()
             .justify_between()
             .w_full()
+            .opacity(if busy { 0.5 } else { 1.0 })
             .child(
                 div()
                     .flex()
@@ -2521,17 +2609,17 @@ impl MainWindow {
                 ),
                 None => translations.cleanup_not_scanned.to_string(),
             };
-            components::card(colors)
-                .flex()
-                .items_center()
-                .gap_3()
-                .p_3()
-                .cursor_pointer()
-                .id(("cleanup-row", index))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.update_state(cx, move |state| state.toggle_cleanup_row(index))
-                }))
-                .child(checkbox)
+            let base = components::card(colors).flex().items_center().gap_3().p_3();
+            let card = if busy {
+                base.opacity(0.6).id(("cleanup-row", index))
+            } else {
+                base.cursor_pointer()
+                    .id(("cleanup-row", index))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_state(cx, move |state| state.toggle_cleanup_row(index))
+                    }))
+            };
+            card.child(checkbox)
                 .child(
                     div()
                         .flex_1()
@@ -2579,6 +2667,7 @@ impl MainWindow {
             .message
             .clone()
             .map(|text| components::alert(text, &colors.info));
+        let progress = busy.then(|| components::progress_bar(colors));
 
         div()
             .flex()
@@ -2587,18 +2676,38 @@ impl MainWindow {
             .size_full()
             .p_6()
             .child(toolbar)
+            .children(progress)
             .children(message)
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap_2()
                     .w_full()
                     .flex_1()
-                    .id("cleanup-list")
-                    .overflow_y_scroll()
-                    .children(rows)
-                    .child(recycle_row),
+                    .min_h(px(0.))
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .w_full()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .min_h(px(0.))
+                            .id("cleanup-list")
+                            .overflow_y_scroll()
+                            .track_scroll(&self.cleanup_scroll)
+                            .on_scroll_wheel(cx.listener(Self::on_scrolled))
+                            .children(rows)
+                            .child(recycle_row),
+                    )
+                    .child(self.render_scrollbar(
+                        &self.cleanup_scroll,
+                        colors,
+                        cx,
+                        "cleanup-scrollbar",
+                        "cleanup-thumb",
+                    )),
             )
     }
 
@@ -2706,20 +2815,41 @@ impl MainWindow {
                 .flex_col()
                 .gap_2()
                 .w_full()
-                .flex_1()
+                .h(px(216.))
+                .flex_shrink_0()
                 .p_4()
                 .child(components::card_title(translations.scripts_header, colors))
                 .child(
                     div()
                         .flex()
-                        .flex_col()
                         .w_full()
                         .flex_1()
-                        .id("script-output")
-                        .overflow_y_scroll()
-                        .text_sm()
-                        .text_color(components::color(colors.fg.default))
-                        .child(text.to_string()),
+                        .min_h(px(0.))
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .w_full()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .min_h(px(0.))
+                                .id("script-output")
+                                .overflow_y_scroll()
+                                .track_scroll(&self.script_scroll)
+                                .on_scroll_wheel(cx.listener(Self::on_scrolled))
+                                .text_sm()
+                                .whitespace_normal()
+                                .text_color(components::color(colors.fg.default))
+                                .child(text.to_string()),
+                        )
+                        .child(self.render_scrollbar(
+                            &self.script_scroll,
+                            colors,
+                            cx,
+                            "script-scrollbar",
+                            "script-thumb",
+                        )),
                 )
         });
 
@@ -2797,18 +2927,29 @@ impl MainWindow {
             .size_full()
             .p_6()
             .child(toolbar)
-            .child(div().flex().flex_col().gap_3().w_full().children(rows))
-            .children(
-                (!state.custom_scripts().is_empty())
-                    .then(|| components::section_label(translations.script_custom, colors)),
-            )
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_3()
                     .w_full()
-                    .children(custom_rows),
+                    .flex_1()
+                    .min_h(px(0.))
+                    .id("script-list")
+                    .overflow_y_scroll()
+                    .child(div().flex().flex_col().gap_3().w_full().children(rows))
+                    .children(
+                        (!state.custom_scripts().is_empty())
+                            .then(|| components::section_label(translations.script_custom, colors)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .w_full()
+                            .children(custom_rows),
+                    ),
             )
             .children(output)
     }
@@ -2938,11 +3079,13 @@ impl MainWindow {
     ) -> Div {
         let translations = state.t();
         let colors = state.theme_colors();
-        let focused = self.script_focus.is_focused(window);
+        let name_focused = self.script_name_focus.is_focused(window);
+        let content_focused = self.script_content_focus.is_focused(window);
+        let kind = state.script_dialog_kind();
 
-        let input = {
+        let name_input = {
             let input_entity = cx.entity();
-            let input_focus = self.script_focus.clone();
+            let input_focus = self.script_name_focus.clone();
             canvas(
                 |_, _, _| (),
                 move |bounds, _, window, cx| {
@@ -2958,20 +3101,68 @@ impl MainWindow {
             .left_0()
             .size_full()
         };
-        let field = components::search_field(
-            state.script_command(),
-            state.script_command_marked(),
-            translations.script_placeholder,
+        let name_field = components::search_field(
+            state.script_dialog_name(),
+            state.script_dialog_name_marked(),
+            "",
             colors,
-            focused,
+            name_focused,
         )
         .relative()
-        .track_focus(&self.script_focus)
+        .track_focus(&self.script_name_focus)
         .cursor_text()
         .focus(|style| style.border_color(components::color(colors.brand.primary)))
-        .id("script-command")
-        .on_click(cx.listener(Self::focus_script))
-        .child(input);
+        .id("script-name")
+        .on_click(cx.listener(Self::focus_script_name))
+        .child(name_input);
+
+        let content_input = {
+            let input_entity = cx.entity();
+            let input_focus = self.script_content_focus.clone();
+            canvas(
+                |_, _, _| (),
+                move |bounds, _, window, cx| {
+                    window.handle_input(
+                        &input_focus,
+                        ElementInputHandler::new(bounds, input_entity.clone()),
+                        cx,
+                    );
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
+        let content_field = components::text_area(
+            state.script_dialog_content(),
+            state.script_dialog_content_marked(),
+            translations.script_placeholder,
+            colors,
+            content_focused,
+            168.,
+        )
+        .relative()
+        .track_focus(&self.script_content_focus)
+        .cursor_text()
+        .focus(|style| style.border_color(components::color(colors.brand.primary)))
+        .id("script-content")
+        .on_click(cx.listener(Self::focus_script_content))
+        .child(content_input);
+
+        let label = move |text: &str| -> Div {
+            div()
+                .w(px(64.))
+                .flex_shrink_0()
+                .pt(px(8.))
+                .text_sm()
+                .text_color(components::color(colors.fg.muted))
+                .child(text.to_string())
+        };
+
+        let error = state
+            .script_dialog_error()
+            .map(|text| components::alert(text.to_string(), &colors.danger));
 
         div()
             .absolute()
@@ -2987,7 +3178,7 @@ impl MainWindow {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .w(px(460.))
+                    .w(px(520.))
                     .p_5()
                     .rounded_xl()
                     .shadow_2xl()
@@ -3004,19 +3195,52 @@ impl MainWindow {
                     .child(
                         div()
                             .flex()
-                            .items_center()
                             .gap_2()
                             .w_full()
+                            .child(label(translations.script_name_label))
+                            .child(div().flex_1().min_w(px(0.)).child(name_field)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .w_full()
+                            .child(label(translations.script_type_label))
                             .child(
                                 div()
-                                    .w(px(56.))
-                                    .flex_shrink_0()
-                                    .text_sm()
-                                    .text_color(components::color(colors.fg.muted))
-                                    .child(translations.script_command_label),
-                            )
-                            .child(div().flex_1().min_w(px(0.)).child(field)),
+                                    .flex()
+                                    .gap_2()
+                                    .child(
+                                        segment(
+                                            translations.script_kind_cmd,
+                                            kind == ScriptKind::Cmd,
+                                            colors,
+                                            "script-kind-cmd",
+                                        )
+                                        .on_click(cx.listener(Self::script_kind_cmd_clicked)),
+                                    )
+                                    .child(
+                                        segment(
+                                            translations.script_kind_powershell,
+                                            kind == ScriptKind::PowerShell,
+                                            colors,
+                                            "script-kind-powershell",
+                                        )
+                                        .on_click(
+                                            cx.listener(Self::script_kind_powershell_clicked),
+                                        ),
+                                    ),
+                            ),
                     )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .w_full()
+                            .child(label(translations.script_content_label))
+                            .child(div().flex_1().min_w(px(0.)).child(content_field)),
+                    )
+                    .children(error)
                     .child(
                         div()
                             .flex()
@@ -3119,6 +3343,7 @@ impl MainWindow {
                 .flex()
                 .flex_1()
                 .w_full()
+                .min_h(px(0.))
                 .overflow_hidden()
                 .id("dialog-scroll-area")
                 .child(
@@ -3128,6 +3353,7 @@ impl MainWindow {
                         .gap_1()
                         .flex_1()
                         .min_w(px(0.))
+                        .min_h(px(0.))
                         .h_full()
                         .id("dialog-service-list")
                         .overflow_y_scroll()
@@ -3401,12 +3627,42 @@ impl MainWindow {
 
     fn add_script_clicked(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.update_state(cx, |state| state.begin_add_script());
-        window.focus(&self.script_focus);
+        window.focus(&self.script_name_focus);
     }
 
-    fn focus_script(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.script_focus);
+    fn focus_script_name(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.script_name_focus);
         cx.notify();
+    }
+
+    fn focus_script_content(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.script_content_focus);
+        cx.notify();
+    }
+
+    fn script_kind_cmd_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_state(cx, |state| state.set_script_dialog_kind(ScriptKind::Cmd));
+    }
+
+    fn script_kind_powershell_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_state(cx, |state| {
+            state.set_script_dialog_kind(ScriptKind::PowerShell)
+        });
     }
 
     fn confirm_add_script_clicked(
@@ -3724,6 +3980,10 @@ impl MainWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let cleanup = self.state.read(cx).cleanup();
+        if cleanup.scanning || cleanup.cleaning {
+            return;
+        }
         self.update_state(cx, |state| state.begin_cleanup_scan());
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
@@ -3754,6 +4014,10 @@ impl MainWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let cleanup = self.state.read(cx).cleanup();
+        if cleanup.scanning || cleanup.cleaning {
+            return;
+        }
         self.pending_clean = true;
         cx.notify();
     }
@@ -3823,6 +4087,10 @@ impl MainWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let cleanup = self.state.read(cx).cleanup();
+        if cleanup.scanning || cleanup.cleaning {
+            return;
+        }
         self.pending_empty_bin = true;
         cx.notify();
     }
@@ -4096,6 +4364,7 @@ impl MainWindow {
                             .flex_col()
                             .w_full()
                             .flex_1()
+                            .min_h(px(0.))
                             .id("detail-body")
                             .overflow_y_scroll()
                             .child(body),
@@ -4244,6 +4513,7 @@ impl MainWindow {
                             .flex_col()
                             .w_full()
                             .flex_1()
+                            .min_h(px(0.))
                             .id("history-body")
                             .overflow_y_scroll()
                             .child(list),
@@ -4430,6 +4700,7 @@ impl Render for MainWindow {
             .flex()
             .flex_1()
             .w_full()
+            .min_h(px(0.))
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
             .child(self.render_sidebar(state, cx))
@@ -4438,8 +4709,9 @@ impl Render for MainWindow {
                     .flex()
                     .flex_col()
                     .flex_1()
+                    .min_h(px(0.))
                     .child(self.render_content_header(state))
-                    .child(div().flex_1().w_full().child(page)),
+                    .child(div().flex_1().w_full().min_h(px(0.)).child(page)),
             );
         if state.show_add_dialog() {
             content = content.child(self.render_add_dialog(window, state, cx));
@@ -4489,7 +4761,10 @@ impl EntityInputHandler for MainWindow {
         let text = match target {
             TextTarget::ServiceSearch => state.service_search_text_range(range_utf16.clone()),
             TextTarget::NetHost => state.net_host_text_range(range_utf16.clone()),
-            TextTarget::ScriptCommand => state.script_command_text_range(range_utf16.clone()),
+            TextTarget::ScriptName => state.script_dialog_name_text_range(range_utf16.clone()),
+            TextTarget::ScriptContent => {
+                state.script_dialog_content_text_range(range_utf16.clone())
+            }
             TextTarget::Dialog => state.add_dialog_text_range(range_utf16.clone()),
         };
         *adjusted_range = Some(range_utf16);
@@ -4507,7 +4782,8 @@ impl EntityInputHandler for MainWindow {
         let cursor = match target {
             TextTarget::ServiceSearch => state.service_search_text_utf16_len(),
             TextTarget::NetHost => state.net_host_text_utf16_len(),
-            TextTarget::ScriptCommand => state.script_command_text_utf16_len(),
+            TextTarget::ScriptName => state.script_dialog_name_utf16_len(),
+            TextTarget::ScriptContent => state.script_dialog_content_utf16_len(),
             TextTarget::Dialog => state.add_dialog_text_utf16_len(),
         };
         Some(UTF16Selection {
@@ -4526,7 +4802,8 @@ impl EntityInputHandler for MainWindow {
         match target {
             TextTarget::ServiceSearch => state.service_search_marked_range(),
             TextTarget::NetHost => state.net_host_marked_range(),
-            TextTarget::ScriptCommand => state.script_command_marked_range(),
+            TextTarget::ScriptName => state.script_dialog_name_marked_range(),
+            TextTarget::ScriptContent => state.script_dialog_content_marked_range(),
             TextTarget::Dialog => state.add_dialog_marked_range(),
         }
     }
@@ -4536,7 +4813,8 @@ impl EntityInputHandler for MainWindow {
         self.update_state(cx, move |state| match target {
             TextTarget::ServiceSearch => state.service_search_unmark(),
             TextTarget::NetHost => state.net_host_unmark(),
-            TextTarget::ScriptCommand => state.script_command_unmark(),
+            TextTarget::ScriptName => state.script_dialog_name_unmark(),
+            TextTarget::ScriptContent => state.script_dialog_content_unmark(),
             TextTarget::Dialog => state.add_dialog_unmark(),
         });
     }
@@ -4559,9 +4837,13 @@ impl EntityInputHandler for MainWindow {
                 Some(range) => state.net_host_replace_range(range, &text),
                 None => state.net_host_commit_text(&text),
             },
-            TextTarget::ScriptCommand => match replacement_range {
-                Some(range) => state.script_command_replace_range(range, &text),
-                None => state.script_command_commit_text(&text),
+            TextTarget::ScriptName => match replacement_range {
+                Some(range) => state.script_dialog_name_replace_range(range, &text),
+                None => state.script_dialog_name_commit_text(&text),
+            },
+            TextTarget::ScriptContent => match replacement_range {
+                Some(range) => state.script_dialog_content_replace_range(range, &text),
+                None => state.script_dialog_content_commit_text(&text),
             },
             TextTarget::Dialog => match replacement_range {
                 Some(range) => state.add_dialog_replace_range(range, &text),
@@ -4593,11 +4875,17 @@ impl EntityInputHandler for MainWindow {
                 }
                 state.net_host_set_marked(&text);
             }
-            TextTarget::ScriptCommand => {
+            TextTarget::ScriptName => {
                 if let Some(range) = range_utf16 {
-                    state.script_command_replace_range(range, "");
+                    state.script_dialog_name_replace_range(range, "");
                 }
-                state.script_command_set_marked(&text);
+                state.script_dialog_name_set_marked(&text);
+            }
+            TextTarget::ScriptContent => {
+                if let Some(range) = range_utf16 {
+                    state.script_dialog_content_replace_range(range, "");
+                }
+                state.script_dialog_content_set_marked(&text);
             }
             TextTarget::Dialog => {
                 if let Some(range) = range_utf16 {

@@ -9,7 +9,7 @@ use crate::cleanup::{CleanupCategory, DeleteMode, Scan};
 use crate::i18n::{Language, Translations, EN, ZH};
 use crate::monitor::Metrics;
 use crate::process::ProcessInfo;
-use crate::scripts::CustomScript;
+use crate::scripts::{CustomScript, ScriptKind};
 use crate::startup::StartupItem;
 use crate::theme::{ThemeColors, DARK, LIGHT};
 
@@ -161,6 +161,30 @@ impl SearchText {
     }
 }
 
+/// Lightweight syntax sanity check for PowerShell bodies: parentheses, braces
+/// and quotes must be balanced outside of string literals.
+fn balanced(text: &str) -> bool {
+    let mut paren = 0i32;
+    let mut brace = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    for ch in text.chars() {
+        match ch {
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '(' if !in_single && !in_double => paren += 1,
+            ')' if !in_single && !in_double => paren -= 1,
+            '{' if !in_single && !in_double => brace += 1,
+            '}' if !in_single && !in_double => brace -= 1,
+            _ => {}
+        }
+        if paren < 0 || brace < 0 {
+            return false;
+        }
+    }
+    paren == 0 && brace == 0 && !in_single && !in_double
+}
+
 /// Which managed services the main list shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceFilter {
@@ -237,6 +261,15 @@ pub struct CleanupRow {
     pub category: CleanupCategory,
     pub selected: bool,
     pub scan: Option<Scan>,
+}
+
+/// Add-script dialog state: name, interpreter and multi-line body.
+#[derive(Default)]
+struct ScriptDialogState {
+    name: SearchText,
+    content: SearchText,
+    kind: ScriptKind,
+    error: Option<String>,
 }
 
 /// Startup items page state.
@@ -316,7 +349,7 @@ pub struct AppState {
     scripts_file: PathBuf,
     custom_scripts: Vec<CustomScript>,
     /// Command being entered in the "add script" dialog.
-    script_dialog: Option<SearchText>,
+    script_dialog: Option<ScriptDialogState>,
     tool_detail_active: bool,
     system_info: Option<SystemInfo>,
     system_info_loading: bool,
@@ -415,7 +448,24 @@ impl AppState {
         self.current_view = view;
         if view != View::Tools {
             self.tool_detail_active = false;
+            self.release_tool_data();
         }
+    }
+
+    /// Drop tool-specific data so nothing keeps sampling while the user is
+    /// elsewhere.
+    fn release_tool_data(&mut self) {
+        self.monitor = MonitorState::default();
+        self.system_info = None;
+        self.system_info_loading = false;
+        self.processes.clear();
+        self.processes_loading = false;
+        self.processes_error = None;
+        self.network.result = None;
+        self.network.loading = false;
+        self.startup.items.clear();
+        self.startup.loading = false;
+        self.startup.error = None;
     }
 
     pub fn managed_services(&self) -> &[ManagedService] {
@@ -743,10 +793,6 @@ impl AppState {
 
     pub fn monitor_active(&self) -> bool {
         self.monitor.active
-    }
-
-    pub fn end_monitor(&mut self) {
-        self.monitor.active = false;
     }
 
     pub fn push_metrics(&mut self, metrics: Metrics) {
@@ -1196,10 +1242,8 @@ impl AppState {
         &self.custom_scripts
     }
 
-    pub fn custom_script_command(&self, index: usize) -> Option<&str> {
-        self.custom_scripts
-            .get(index)
-            .map(|script| script.command.as_str())
+    pub fn custom_script(&self, index: usize) -> Option<&CustomScript> {
+        self.custom_scripts.get(index)
     }
 
     pub fn show_script_dialog(&self) -> bool {
@@ -1207,93 +1251,222 @@ impl AppState {
     }
 
     pub fn begin_add_script(&mut self) {
-        self.script_dialog = Some(SearchText::default());
+        self.script_dialog = Some(ScriptDialogState::default());
     }
 
     pub fn close_add_script(&mut self) {
         self.script_dialog = None;
     }
 
-    pub fn script_command(&self) -> &str {
+    pub fn script_dialog_name(&self) -> &str {
         self.script_dialog
             .as_ref()
-            .map(|dialog| dialog.text.as_str())
+            .map(|dialog| dialog.name.text.as_str())
             .unwrap_or("")
     }
 
-    pub fn script_command_marked(&self) -> &str {
+    pub fn script_dialog_name_marked(&self) -> &str {
         self.script_dialog
             .as_ref()
-            .map(|dialog| dialog.marked.as_str())
+            .map(|dialog| dialog.name.marked.as_str())
             .unwrap_or("")
     }
 
-    pub fn script_command_text_utf16_len(&self) -> usize {
+    pub fn script_dialog_name_utf16_len(&self) -> usize {
         self.script_dialog
             .as_ref()
-            .map(SearchText::utf16_len)
+            .map(|dialog| dialog.name.utf16_len())
             .unwrap_or(0)
     }
 
-    pub fn script_command_marked_range(&self) -> Option<Range<usize>> {
+    pub fn script_dialog_name_marked_range(&self) -> Option<Range<usize>> {
         self.script_dialog
             .as_ref()
-            .and_then(SearchText::marked_range)
+            .and_then(|dialog| dialog.name.marked_range())
     }
 
-    pub fn script_command_text_range(&self, range: Range<usize>) -> String {
+    pub fn script_dialog_name_text_range(&self, range: Range<usize>) -> String {
         self.script_dialog
             .as_ref()
-            .map(|dialog| dialog.text_range(range))
+            .map(|dialog| dialog.name.text_range(range))
             .unwrap_or_default()
     }
 
-    pub fn script_command_replace_range(&mut self, range: Range<usize>, text: &str) {
+    pub fn script_dialog_name_replace_range(&mut self, range: Range<usize>, text: &str) {
         if let Some(dialog) = self.script_dialog.as_mut() {
-            dialog.replace_range(range, text);
+            dialog.name.replace_range(range, text);
+            dialog.error = None;
         }
     }
 
-    pub fn script_command_commit_text(&mut self, text: &str) {
+    pub fn script_dialog_name_commit_text(&mut self, text: &str) {
         if let Some(dialog) = self.script_dialog.as_mut() {
-            dialog.commit(text);
+            dialog.name.commit(text);
+            dialog.error = None;
         }
     }
 
-    pub fn script_command_set_marked(&mut self, text: &str) {
+    pub fn script_dialog_name_set_marked(&mut self, text: &str) {
         if let Some(dialog) = self.script_dialog.as_mut() {
-            dialog.set_marked(text);
+            dialog.name.set_marked(text);
+            dialog.error = None;
         }
     }
 
-    pub fn script_command_unmark(&mut self) {
+    pub fn script_dialog_name_unmark(&mut self) {
         if let Some(dialog) = self.script_dialog.as_mut() {
-            dialog.unmark();
+            dialog.name.unmark();
+            dialog.error = None;
         }
     }
 
-    pub fn script_command_backspace(&mut self) {
+    pub fn script_dialog_name_backspace(&mut self) {
         if let Some(dialog) = self.script_dialog.as_mut() {
-            dialog.backspace();
+            dialog.name.backspace();
+            dialog.error = None;
         }
     }
 
-    /// Add the typed command as a custom script (name derived from the command).
+    pub fn script_dialog_content(&self) -> &str {
+        self.script_dialog
+            .as_ref()
+            .map(|dialog| dialog.content.text.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn script_dialog_content_marked(&self) -> &str {
+        self.script_dialog
+            .as_ref()
+            .map(|dialog| dialog.content.marked.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn script_dialog_content_utf16_len(&self) -> usize {
+        self.script_dialog
+            .as_ref()
+            .map(|dialog| dialog.content.utf16_len())
+            .unwrap_or(0)
+    }
+
+    pub fn script_dialog_content_marked_range(&self) -> Option<Range<usize>> {
+        self.script_dialog
+            .as_ref()
+            .and_then(|dialog| dialog.content.marked_range())
+    }
+
+    pub fn script_dialog_content_text_range(&self, range: Range<usize>) -> String {
+        self.script_dialog
+            .as_ref()
+            .map(|dialog| dialog.content.text_range(range))
+            .unwrap_or_default()
+    }
+
+    pub fn script_dialog_content_replace_range(&mut self, range: Range<usize>, text: &str) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.content.replace_range(range, text);
+            dialog.error = None;
+        }
+    }
+
+    pub fn script_dialog_content_commit_text(&mut self, text: &str) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.content.commit(text);
+            dialog.error = None;
+        }
+    }
+
+    pub fn script_dialog_content_set_marked(&mut self, text: &str) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.content.set_marked(text);
+            dialog.error = None;
+        }
+    }
+
+    pub fn script_dialog_content_unmark(&mut self) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.content.unmark();
+            dialog.error = None;
+        }
+    }
+
+    pub fn script_dialog_content_backspace(&mut self) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.content.backspace();
+            dialog.error = None;
+        }
+    }
+
+    /// Insert a line break in the multi-line script body.
+    pub fn script_dialog_content_newline(&mut self) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.content.text.push('\n');
+            dialog.content.marked.clear();
+            dialog.error = None;
+        }
+    }
+
+    pub fn script_dialog_kind(&self) -> ScriptKind {
+        self.script_dialog
+            .as_ref()
+            .map(|dialog| dialog.kind)
+            .unwrap_or_default()
+    }
+
+    pub fn set_script_dialog_kind(&mut self, kind: ScriptKind) {
+        if let Some(dialog) = self.script_dialog.as_mut() {
+            dialog.kind = kind;
+            dialog.error = None;
+        }
+    }
+
+    pub fn script_dialog_error(&self) -> Option<&str> {
+        self.script_dialog
+            .as_ref()
+            .and_then(|dialog| dialog.error.as_deref())
+    }
+
+    /// Validate and store the custom script. Errors are shown in the dialog.
     pub fn confirm_add_script(&mut self) {
-        let Some(dialog) = self.script_dialog.take() else {
+        let translations = self.t();
+        let name_error = translations.script_err_name;
+        let content_error = translations.script_err_content;
+        let duplicate_error = translations.script_err_duplicate;
+        let syntax_error = translations.script_err_syntax;
+
+        let Some(dialog) = self.script_dialog.as_mut() else {
             return;
         };
-        let command = dialog.full_text().trim().to_string();
-        if command.is_empty() {
+        let name = dialog.name.full_text().trim().to_string();
+        let content = dialog.content.full_text();
+        if name.is_empty() {
+            dialog.error = Some(name_error.to_string());
             return;
         }
-        let name = command
-            .split_whitespace()
-            .next()
-            .unwrap_or(&command)
-            .to_string();
-        self.custom_scripts.push(CustomScript { name, command });
+        if content.trim().is_empty() {
+            dialog.error = Some(content_error.to_string());
+            return;
+        }
+        if self
+            .custom_scripts
+            .iter()
+            .any(|script| script.name.eq_ignore_ascii_case(&name))
+        {
+            dialog.error = Some(duplicate_error.to_string());
+            return;
+        }
+        if dialog.kind == ScriptKind::PowerShell && !balanced(&content) {
+            dialog.error = Some(syntax_error.to_string());
+            return;
+        }
+
+        let kind = dialog.kind;
+        self.custom_scripts.push(CustomScript {
+            name,
+            kind,
+            command: content,
+        });
         crate::scripts::save(&self.scripts_file, &self.custom_scripts);
+        self.script_dialog = None;
     }
 
     pub fn remove_custom_script(&mut self, index: usize) {
@@ -1341,7 +1514,7 @@ impl AppState {
 
     pub fn close_tool_detail(&mut self) {
         self.tool_detail_active = false;
-        self.end_monitor();
+        self.release_tool_data();
     }
 
     pub fn system_info(&self) -> Option<&SystemInfo> {
@@ -1685,5 +1858,67 @@ mod tests {
         state.select_add_dialog(1);
 
         assert_eq!(state.add_dialog_selected(), 1);
+    }
+
+    #[test]
+    fn script_balance_check_flags_unbalanced_powershell() {
+        assert!(balanced("Get-Process | Where-Object { $_.CPU -gt 1 }"));
+        assert!(balanced("Write-Output 'a (b'"));
+        assert!(!balanced("if ($x) { Write-Host 'hi'"));
+        assert!(!balanced("Write-Output \"unterminated"));
+    }
+
+    #[test]
+    fn custom_script_dialog_validates_and_saves() {
+        let mut state = AppState::new();
+        // Redirect persistence into the temp directory so tests never touch the
+        // real configuration file.
+        state.scripts_file = std::env::temp_dir().join("rust-win-tool-test-scripts.json");
+        let _ = std::fs::remove_file(&state.scripts_file);
+
+        state.begin_add_script();
+        state.confirm_add_script();
+        assert!(state.script_dialog_error().is_some());
+        assert!(state.custom_scripts().is_empty());
+
+        state.script_dialog_name_commit_text("My Script");
+        state.confirm_add_script();
+        assert!(state.script_dialog_error().is_some());
+
+        state.set_script_dialog_kind(ScriptKind::PowerShell);
+        assert!(state.script_dialog_error().is_none());
+        state.script_dialog_content_commit_text("if ($true) {");
+        state.confirm_add_script();
+        assert!(state.script_dialog_error().is_some());
+
+        state.script_dialog_content_unmark();
+        let len = state.script_dialog_content_utf16_len();
+        state.script_dialog_content_replace_range(0..len, "Write-Output 'ok'");
+        state.confirm_add_script();
+        assert!(state.script_dialog_error().is_none());
+        assert_eq!(state.custom_scripts().len(), 1);
+
+        let _ = std::fs::remove_file(&state.scripts_file);
+    }
+
+    #[test]
+    fn custom_script_rejects_duplicate_names() {
+        let mut state = AppState::new();
+        state.scripts_file = std::env::temp_dir().join("rust-win-tool-test-dup-scripts.json");
+        let _ = std::fs::remove_file(&state.scripts_file);
+        state.custom_scripts.push(CustomScript {
+            name: "Existing".into(),
+            kind: ScriptKind::Cmd,
+            command: "echo hi".into(),
+        });
+
+        state.begin_add_script();
+        state.script_dialog_name_commit_text("existing");
+        state.script_dialog_content_commit_text("echo hi");
+        state.confirm_add_script();
+
+        assert!(state.script_dialog_error().is_some());
+        assert_eq!(state.custom_scripts().len(), 1);
+        let _ = std::fs::remove_file(&state.scripts_file);
     }
 }
