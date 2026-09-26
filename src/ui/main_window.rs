@@ -760,7 +760,16 @@ impl MainWindow {
         let colors = state.theme_colors();
         let (title, description) =
             if state.current_view() == View::Tools && state.tool_detail_active() {
-                (translations.sysinfo_title, translations.tool_sysinfo_desc)
+                match state.tools_selected() {
+                    1 => (
+                        translations.tool_processes,
+                        translations.tool_processes_desc,
+                    ),
+                    2 => (translations.tool_monitor, translations.tool_monitor_desc),
+                    3 => (translations.tool_network, translations.tool_network_desc),
+                    4 => (translations.tool_startup, translations.tool_startup_desc),
+                    _ => (translations.sysinfo_title, translations.tool_sysinfo_desc),
+                }
             } else {
                 match state.current_view() {
                     View::Service => (translations.svc_header, translations.page_service_desc),

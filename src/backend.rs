@@ -102,8 +102,8 @@ pub fn run_command(command: &str) -> Result<String, BackendError> {
     let output = cmd
         .output()
         .map_err(|error| BackendError::Command(error.to_string()))?;
-    let mut text = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut text = decode_console(&output.stdout);
+    let stderr = decode_console(&output.stderr);
     if !stderr.trim().is_empty() {
         text.push('\n');
         text.push_str(&stderr);
@@ -112,6 +112,51 @@ pub fn run_command(command: &str) -> Result<String, BackendError> {
         return Err(BackendError::Command(text.trim().to_string()));
     }
     Ok(text.trim().to_string())
+}
+
+/// Console programs emit text in the OEM code page, not UTF-8.
+#[cfg(windows)]
+fn decode_console(bytes: &[u8]) -> String {
+    use windows_sys::Win32::Globalization::MultiByteToWideChar;
+
+    const CP_OEMCP: u32 = 1;
+    if bytes.is_empty() {
+        return String::new();
+    }
+    let length = unsafe {
+        MultiByteToWideChar(
+            CP_OEMCP,
+            0,
+            bytes.as_ptr(),
+            bytes.len() as i32,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if length <= 0 {
+        return String::from_utf8_lossy(bytes).to_string();
+    }
+    let mut wide = vec![0u16; length as usize];
+    let written = unsafe {
+        MultiByteToWideChar(
+            CP_OEMCP,
+            0,
+            bytes.as_ptr(),
+            bytes.len() as i32,
+            wide.as_mut_ptr(),
+            length,
+        )
+    };
+    if written <= 0 {
+        return String::from_utf8_lossy(bytes).to_string();
+    }
+    wide.truncate(written as usize);
+    String::from_utf16_lossy(&wide)
+}
+
+#[cfg(not(windows))]
+fn decode_console(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).to_string()
 }
 
 pub fn flush_dns() -> Result<String, BackendError> {
