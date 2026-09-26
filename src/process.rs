@@ -171,10 +171,19 @@ mod platform {
         }
         Ok(())
     }
+
+    /// Resolve a PID to its executable name, or an empty string if it cannot
+    /// be queried (for example protected processes).
+    pub fn name_for_pid(pid: u32) -> String {
+        match open(pid, PROCESS_QUERY_LIMITED_INFORMATION) {
+            Some(handle) => process_name(handle.0),
+            None => String::new(),
+        }
+    }
 }
 
 #[cfg(windows)]
-pub use platform::{list, terminate};
+pub use platform::{list, name_for_pid, terminate};
 
 #[cfg(not(windows))]
 pub fn list() -> Vec<ProcessInfo> {
@@ -184,6 +193,11 @@ pub fn list() -> Vec<ProcessInfo> {
 #[cfg(not(windows))]
 pub fn terminate(_pid: u32) -> Result<(), String> {
     Err("unsupported platform".to_string())
+}
+
+#[cfg(not(windows))]
+pub fn name_for_pid(_pid: u32) -> String {
+    String::new()
 }
 
 pub fn format_memory(bytes: u64) -> String {

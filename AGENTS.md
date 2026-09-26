@@ -24,6 +24,12 @@ cargo test
 │   ├── cleanup.rs              # Junk file scan/clean (native, recycle bin)
 │   ├── file_dialog.rs          # Native open/save file dialogs
 │   ├── logging.rs              # Append-only file logger (config/logs)
+│   ├── monitor.rs              # Live CPU/memory/network/disk sampling
+│   ├── network.rs              # DNS, TCP port checks and ICMP ping
+│   ├── port.rs                 # Port occupancy lookup via IP Helper
+│   ├── process.rs              # Process listing, termination and PID name lookup
+│   ├── scripts.rs              # Custom script library persistence
+│   ├── startup.rs              # Startup item listing and toggling
 │   ├── tray.rs                 # System tray icon and menu (Shell_NotifyIcon)
 │   ├── i18n.rs                 # Internationalization (Language, Translations, ZH/EN)
 │   ├── theme.rs                # Framework-neutral theme colors

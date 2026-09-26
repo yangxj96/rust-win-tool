@@ -88,6 +88,10 @@ pub fn terminate_process(pid: u32) -> Result<(), BackendError> {
     crate::process::terminate(pid).map_err(BackendError::Command)
 }
 
+pub fn lookup_port(port: u16) -> Result<Vec<crate::port::PortEntry>, BackendError> {
+    Ok(crate::port::lookup(port))
+}
+
 pub fn sample_metrics() -> Result<crate::monitor::Metrics, BackendError> {
     Ok(crate::monitor::sample())
 }

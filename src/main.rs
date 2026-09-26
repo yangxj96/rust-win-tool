@@ -12,6 +12,7 @@ mod i18n;
 mod logging;
 mod monitor;
 mod network;
+mod port;
 mod process;
 mod scripts;
 mod startup;

@@ -51,6 +51,7 @@ pub struct MainWindow {
     search_focus: FocusHandle,
     service_search_focus: FocusHandle,
     net_host_focus: FocusHandle,
+    port_lookup_focus: FocusHandle,
     script_name_focus: FocusHandle,
     script_content_focus: FocusHandle,
     service_scroll: ScrollHandle,
@@ -60,6 +61,7 @@ pub struct MainWindow {
     startup_scroll: ScrollHandle,
     cleanup_scroll: ScrollHandle,
     script_scroll: ScrollHandle,
+    port_scroll: ScrollHandle,
     /// Managed service awaiting delete confirmation.
     pending_delete: Option<String>,
     /// Cleanup confirmation dialogs.
@@ -91,6 +93,7 @@ enum TextTarget {
     Dialog,
     ServiceSearch,
     NetHost,
+    PortLookup,
     ScriptName,
     ScriptContent,
 }
@@ -129,6 +132,7 @@ impl MainWindow {
             search_focus: cx.focus_handle(),
             service_search_focus: cx.focus_handle(),
             net_host_focus: cx.focus_handle(),
+            port_lookup_focus: cx.focus_handle(),
             script_name_focus: cx.focus_handle(),
             script_content_focus: cx.focus_handle(),
             service_scroll: ScrollHandle::new(),
@@ -138,6 +142,7 @@ impl MainWindow {
             startup_scroll: ScrollHandle::new(),
             cleanup_scroll: ScrollHandle::new(),
             script_scroll: ScrollHandle::new(),
+            port_scroll: ScrollHandle::new(),
             pending_delete: None,
             pending_clean: false,
             pending_empty_bin: false,
@@ -153,6 +158,8 @@ impl MainWindow {
             TextTarget::ServiceSearch
         } else if self.net_host_focus.is_focused(window) {
             TextTarget::NetHost
+        } else if self.port_lookup_focus.is_focused(window) {
+            TextTarget::PortLookup
         } else if self.script_name_focus.is_focused(window) {
             TextTarget::ScriptName
         } else if self.script_content_focus.is_focused(window) {
@@ -169,8 +176,14 @@ impl MainWindow {
         // Enter to insert a line break instead of activating a button.
         let target = self.text_target(window);
         if event.keystroke.key == "enter" {
-            if target == TextTarget::ScriptContent {
-                self.update_state(cx, |state| state.script_dialog_content_newline());
+            match target {
+                TextTarget::ScriptContent => {
+                    self.update_state(cx, |state| state.script_dialog_content_newline());
+                }
+                TextTarget::PortLookup => {
+                    self.run_port_lookup(cx);
+                }
+                _ => {}
             }
             return;
         }
@@ -183,6 +196,9 @@ impl MainWindow {
             }
             TextTarget::NetHost => {
                 self.update_state(cx, |state| state.net_host_backspace());
+            }
+            TextTarget::PortLookup => {
+                self.update_state(cx, |state| state.port_lookup_query_backspace());
             }
             TextTarget::ScriptName => {
                 self.update_state(cx, |state| state.script_dialog_name_backspace());
@@ -2241,6 +2257,15 @@ impl MainWindow {
                         )
                         .id("process-refresh")
                         .on_click(cx.listener(Self::refresh_processes_clicked)),
+                    )
+                    .child(
+                        components::button(
+                            translations.proc_port_lookup,
+                            colors,
+                            components::ButtonVariant::Secondary,
+                        )
+                        .id("process-port-lookup")
+                        .on_click(cx.listener(Self::open_port_lookup_clicked)),
                     ),
             )
             .child(sort_control);
@@ -3505,6 +3530,61 @@ impl MainWindow {
         self.refresh_processes(cx);
     }
 
+    fn open_port_lookup_clicked(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_state(cx, |state| state.open_port_lookup());
+        window.focus(&self.port_lookup_focus);
+    }
+
+    fn focus_port_lookup(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.port_lookup_focus);
+        cx.notify();
+    }
+
+    fn close_port_lookup_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_state(cx, |state| state.close_port_lookup());
+    }
+
+    fn search_port_lookup_clicked(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_port_lookup(cx);
+    }
+
+    fn run_port_lookup(&mut self, cx: &mut Context<Self>) {
+        let Some(port) = self
+            .state
+            .update(cx, |state, _cx| state.begin_port_lookup())
+        else {
+            return;
+        };
+        let state = self.state.clone();
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_spawn(async move { backend::lookup_port(port) })
+                .await;
+            state
+                .update(cx, |state, cx| {
+                    state.set_port_lookup(result);
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
     fn refresh_startup_clicked(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.update_state(cx, |state| state.begin_startup_refresh());
         let state = self.state.clone();
@@ -3552,6 +3632,9 @@ impl MainWindow {
         let Some((pid, _name)) = self.pending_kill.take() else {
             return;
         };
+        // If the port lookup dialog is showing results, refresh them once the
+        // process is gone so the freed port disappears from the list.
+        let port = self.state.read(cx).port_lookup_port();
         let state = self.state.clone();
         cx.spawn(async move |_this, cx| {
             let result = cx
@@ -3560,9 +3643,19 @@ impl MainWindow {
             let list = cx
                 .background_spawn(async { backend::list_processes() })
                 .await;
+            let port_result = match port {
+                Some(port) => Some(
+                    cx.background_spawn(async move { backend::lookup_port(port) })
+                        .await,
+                ),
+                None => None,
+            };
             state
                 .update(cx, |state, cx| {
                     state.set_processes(list);
+                    if let Some(result) = port_result {
+                        state.set_port_lookup(result);
+                    }
                     if let Err(error) = result {
                         state.set_refresh_notice(error.to_string());
                     }
@@ -4023,8 +4116,8 @@ impl MainWindow {
                     let message = state
                         .t()
                         .cleanup_done
-                        .replace("{}", &cleanup::format_bytes(report.freed_bytes))
-                        .replace("{}", &report.skipped_files.to_string());
+                        .replacen("{}", &cleanup::format_bytes(report.freed_bytes), 1)
+                        .replacen("{}", &report.skipped_files.to_string(), 1);
                     state.apply_cleanup_result(scans, recycle_bin, message);
                     cx.notify();
                 })
@@ -4489,6 +4582,324 @@ impl MainWindow {
             )
     }
 
+    /// Modal that looks up which process is using a given local port and lets
+    /// the user terminate it.
+    fn render_port_lookup_dialog(
+        &self,
+        window: &Window,
+        state: &AppState,
+        cx: &Context<Self>,
+    ) -> Div {
+        let translations = state.t();
+        let colors = state.theme_colors();
+        let focused = self.port_lookup_focus.is_focused(window);
+
+        let input = {
+            let input_entity = cx.entity();
+            let input_focus = self.port_lookup_focus.clone();
+            canvas(
+                |_, _, _| (),
+                move |bounds, _, window, cx| {
+                    window.handle_input(
+                        &input_focus,
+                        ElementInputHandler::new(bounds, input_entity.clone()),
+                        cx,
+                    );
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
+        let field = components::search_field(
+            state.port_lookup_query(),
+            state.port_lookup_query_marked(),
+            translations.proc_port_placeholder,
+            colors,
+            focused,
+        )
+        .relative()
+        .track_focus(&self.port_lookup_focus)
+        .cursor_text()
+        .focus(|style| style.border_color(components::color(colors.brand.primary)))
+        .id("port-lookup-input")
+        .on_click(cx.listener(Self::focus_port_lookup))
+        .child(input);
+
+        let header = div()
+            .flex()
+            .items_center()
+            .w_full()
+            .h(px(30.))
+            .px_3()
+            .bg(components::color(colors.bg.muted))
+            .text_xs()
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(components::color(colors.fg.muted))
+            .child(div().w(px(56.)).child(translations.proc_col_protocol))
+            .child(div().w(px(160.)).child(translations.proc_col_local))
+            .child(div().w(px(160.)).child(translations.proc_col_remote))
+            .child(div().w(px(92.)).child(translations.proc_col_state))
+            .child(div().w(px(72.)).child(translations.proc_pid))
+            .child(div().flex_1().child(translations.proc_name))
+            .child(div().w(px(64.)));
+
+        let rows = state
+            .port_lookup_results()
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                let pid = entry.pid;
+                let name = entry.process_name.clone();
+                let confirm_name = if name.is_empty() {
+                    format!("PID {pid}")
+                } else {
+                    name.clone()
+                };
+                div()
+                    .flex()
+                    .items_center()
+                    .w_full()
+                    .min_h(px(38.))
+                    .px_3()
+                    .border_b_1()
+                    .border_color(components::color(colors.border.subtle))
+                    .text_sm()
+                    .text_color(components::color(colors.fg.default))
+                    .child(
+                        div()
+                            .w(px(56.))
+                            .text_color(components::color(colors.fg.muted))
+                            .child(entry.protocol.label()),
+                    )
+                    .child(
+                        div()
+                            .w(px(160.))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(format!("{}:{}", entry.local_addr, entry.local_port)),
+                    )
+                    .child(
+                        div()
+                            .w(px(160.))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(components::color(colors.fg.muted))
+                            .child(if entry.remote_addr.is_empty() {
+                                "—".to_string()
+                            } else {
+                                entry.remote_addr.clone()
+                            }),
+                    )
+                    .child(
+                        div()
+                            .w(px(92.))
+                            .text_color(components::color(colors.fg.muted))
+                            .child(if entry.state.is_empty() {
+                                "—".to_string()
+                            } else {
+                                entry.state.clone()
+                            }),
+                    )
+                    .child(
+                        div()
+                            .w(px(72.))
+                            .text_color(components::color(colors.fg.muted))
+                            .child(pid.to_string()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(if name.is_empty() {
+                                "—".to_string()
+                            } else {
+                                name.clone()
+                            }),
+                    )
+                    .child(
+                        div().w(px(64.)).child(
+                            components::button(
+                                translations.proc_end,
+                                colors,
+                                components::ButtonVariant::Danger,
+                            )
+                            .h(px(24.))
+                            .px_2()
+                            .text_xs()
+                            .id(("port-end", index))
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.pending_kill = Some((pid, confirm_name.clone()));
+                                    cx.notify();
+                                },
+                            )),
+                        ),
+                    )
+            });
+
+        let results: Div = if let Some(error) = state.port_lookup_error() {
+            div()
+                .flex()
+                .flex_1()
+                .min_h(px(0.))
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(components::color(colors.danger.text))
+                .child(error.to_string())
+        } else if state.port_lookup_loading() {
+            div()
+                .flex()
+                .flex_1()
+                .min_h(px(0.))
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(components::color(colors.fg.muted))
+                .child(translations.status_refreshing)
+        } else if !state.port_lookup_searched() {
+            div()
+                .flex()
+                .flex_1()
+                .min_h(px(0.))
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(components::color(colors.fg.subtle))
+                .child(translations.proc_port_placeholder)
+        } else if state.port_lookup_results().is_empty() {
+            div()
+                .flex()
+                .flex_1()
+                .min_h(px(0.))
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(components::color(colors.fg.muted))
+                .child(translations.proc_port_none)
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .flex_1()
+                .min_h(px(0.))
+                .child(header)
+                .child(
+                    div()
+                        .flex()
+                        .w_full()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .w_full()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .min_h(px(0.))
+                                .id("port-lookup-list")
+                                .overflow_y_scroll()
+                                .track_scroll(&self.port_scroll)
+                                .on_scroll_wheel(cx.listener(Self::on_scrolled))
+                                .children(rows),
+                        )
+                        .child(self.render_scrollbar(
+                            &self.port_scroll,
+                            colors,
+                            cx,
+                            "port-scrollbar",
+                            "port-thumb",
+                        )),
+                )
+        };
+
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .occlude()
+            .bg(rgba(0x00000099))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .w(px(820.))
+                    .h(px(520.))
+                    .p_5()
+                    .rounded_xl()
+                    .shadow_2xl()
+                    .bg(components::color(colors.bg.elevated))
+                    .border_1()
+                    .border_color(components::color(colors.border.default))
+                    .text_color(components::color(colors.fg.default))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .w_full()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(translations.proc_port_title),
+                            )
+                            .child(
+                                components::button("✕", colors, components::ButtonVariant::Ghost)
+                                    .w(px(28.))
+                                    .h(px(28.))
+                                    .px_0()
+                                    .id("port-lookup-close-icon")
+                                    .on_click(cx.listener(Self::close_port_lookup_clicked)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .w_full()
+                            .child(div().flex_1().min_w(px(0.)).child(field))
+                            .child(
+                                components::button(
+                                    translations.proc_port_search,
+                                    colors,
+                                    components::ButtonVariant::Primary,
+                                )
+                                .id("port-lookup-search")
+                                .on_click(cx.listener(Self::search_port_lookup_clicked)),
+                            ),
+                    )
+                    .child(results)
+                    .child(
+                        div().flex().justify_end().child(
+                            components::button(
+                                translations.dialog_close,
+                                colors,
+                                components::ButtonVariant::Secondary,
+                            )
+                            .id("port-lookup-close")
+                            .on_click(cx.listener(Self::close_port_lookup_clicked)),
+                        ),
+                    ),
+            )
+    }
+
     /// Modal that shows the output of the most recent script run. Closing it
     /// leaves the script list unobstructed.
     fn render_script_output(&self, state: &AppState, cx: &Context<Self>) -> Div {
@@ -4663,8 +5074,8 @@ impl MainWindow {
         let (pid, name) = self.pending_kill.clone().unwrap_or((0, String::new()));
         let message = translations
             .proc_confirm_message
-            .replace("{}", &name)
-            .replace("{}", &pid.to_string());
+            .replacen("{}", &name, 1)
+            .replacen("{}", &pid.to_string(), 1);
         self.render_confirm_dialog(
             state,
             cx,
@@ -4710,9 +5121,9 @@ impl MainWindow {
         };
         let message = translations
             .cleanup_confirm_message
-            .replace("{}", &cleanup::format_bytes(totals.bytes))
-            .replace("{}", &totals.files.to_string())
-            .replace("{}", mode);
+            .replacen("{}", &cleanup::format_bytes(totals.bytes), 1)
+            .replacen("{}", &totals.files.to_string(), 1)
+            .replacen("{}", mode, 1);
         self.render_confirm_dialog(
             state,
             cx,
@@ -4734,8 +5145,8 @@ impl MainWindow {
         let (bytes, items) = state.cleanup().recycle_bin.unwrap_or((0, 0));
         let message = translations
             .cleanup_bin_confirm_message
-            .replace("{}", &items.to_string())
-            .replace("{}", &cleanup::format_bytes(bytes));
+            .replacen("{}", &items.to_string(), 1)
+            .replacen("{}", &cleanup::format_bytes(bytes), 1);
         self.render_confirm_dialog(
             state,
             cx,
@@ -4782,6 +5193,9 @@ impl Render for MainWindow {
             );
         if state.show_add_dialog() {
             content = content.child(self.render_add_dialog(window, state, cx));
+        }
+        if state.show_port_lookup() {
+            content = content.child(self.render_port_lookup_dialog(window, state, cx));
         }
         if self.pending_delete.is_some() {
             content = content.child(self.render_confirm_delete(state, cx));
@@ -4831,6 +5245,7 @@ impl EntityInputHandler for MainWindow {
         let text = match target {
             TextTarget::ServiceSearch => state.service_search_text_range(range_utf16.clone()),
             TextTarget::NetHost => state.net_host_text_range(range_utf16.clone()),
+            TextTarget::PortLookup => state.port_lookup_query_text_range(range_utf16.clone()),
             TextTarget::ScriptName => state.script_dialog_name_text_range(range_utf16.clone()),
             TextTarget::ScriptContent => {
                 state.script_dialog_content_text_range(range_utf16.clone())
@@ -4852,6 +5267,7 @@ impl EntityInputHandler for MainWindow {
         let cursor = match target {
             TextTarget::ServiceSearch => state.service_search_text_utf16_len(),
             TextTarget::NetHost => state.net_host_text_utf16_len(),
+            TextTarget::PortLookup => state.port_lookup_query_utf16_len(),
             TextTarget::ScriptName => state.script_dialog_name_utf16_len(),
             TextTarget::ScriptContent => state.script_dialog_content_utf16_len(),
             TextTarget::Dialog => state.add_dialog_text_utf16_len(),
@@ -4872,6 +5288,7 @@ impl EntityInputHandler for MainWindow {
         match target {
             TextTarget::ServiceSearch => state.service_search_marked_range(),
             TextTarget::NetHost => state.net_host_marked_range(),
+            TextTarget::PortLookup => state.port_lookup_query_marked_range(),
             TextTarget::ScriptName => state.script_dialog_name_marked_range(),
             TextTarget::ScriptContent => state.script_dialog_content_marked_range(),
             TextTarget::Dialog => state.add_dialog_marked_range(),
@@ -4883,6 +5300,7 @@ impl EntityInputHandler for MainWindow {
         self.update_state(cx, move |state| match target {
             TextTarget::ServiceSearch => state.service_search_unmark(),
             TextTarget::NetHost => state.net_host_unmark(),
+            TextTarget::PortLookup => state.port_lookup_query_unmark(),
             TextTarget::ScriptName => state.script_dialog_name_unmark(),
             TextTarget::ScriptContent => state.script_dialog_content_unmark(),
             TextTarget::Dialog => state.add_dialog_unmark(),
@@ -4906,6 +5324,10 @@ impl EntityInputHandler for MainWindow {
             TextTarget::NetHost => match replacement_range {
                 Some(range) => state.net_host_replace_range(range, &text),
                 None => state.net_host_commit_text(&text),
+            },
+            TextTarget::PortLookup => match replacement_range {
+                Some(range) => state.port_lookup_query_replace_range(range, &text),
+                None => state.port_lookup_query_commit_text(&text),
             },
             TextTarget::ScriptName => match replacement_range {
                 Some(range) => state.script_dialog_name_replace_range(range, &text),
@@ -4944,6 +5366,12 @@ impl EntityInputHandler for MainWindow {
                     state.net_host_replace_range(range, "");
                 }
                 state.net_host_set_marked(&text);
+            }
+            TextTarget::PortLookup => {
+                if let Some(range) = range_utf16 {
+                    state.port_lookup_query_replace_range(range, "");
+                }
+                state.port_lookup_query_set_marked(&text);
             }
             TextTarget::ScriptName => {
                 if let Some(range) = range_utf16 {

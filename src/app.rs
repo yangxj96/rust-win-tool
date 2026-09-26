@@ -8,6 +8,7 @@ use crate::backend::BackendError;
 use crate::cleanup::{CleanupCategory, DeleteMode, Scan};
 use crate::i18n::{Language, Translations, EN, ZH};
 use crate::monitor::Metrics;
+use crate::port::PortEntry;
 use crate::process::ProcessInfo;
 use crate::scripts::{CustomScript, ScriptKind};
 use crate::startup::StartupItem;
@@ -298,6 +299,18 @@ pub struct MonitorState {
     pub memory_history: Vec<f32>,
 }
 
+/// Port occupancy lookup dialog state.
+#[derive(Default)]
+struct PortLookupState {
+    open: bool,
+    query: SearchText,
+    port: Option<u16>,
+    loading: bool,
+    error: Option<String>,
+    results: Vec<PortEntry>,
+    searched: bool,
+}
+
 const MONITOR_HISTORY: usize = 60;
 
 /// Junk cleanup page state.
@@ -371,6 +384,7 @@ pub struct AppState {
     processes_loading: bool,
     processes_error: Option<String>,
     process_sort: ProcessSort,
+    port_lookup: PortLookupState,
     monitor: MonitorState,
     network: NetState,
     startup: StartupState,
@@ -428,6 +442,7 @@ impl AppState {
             processes_loading: false,
             processes_error: None,
             process_sort: ProcessSort::Memory,
+            port_lookup: PortLookupState::default(),
             monitor: MonitorState::default(),
             network: NetState {
                 host: SearchText::default(),
@@ -471,6 +486,7 @@ impl AppState {
         self.startup.items.clear();
         self.startup.loading = false;
         self.startup.error = None;
+        self.port_lookup = PortLookupState::default();
     }
 
     pub fn managed_services(&self) -> &[ManagedService] {
@@ -788,6 +804,137 @@ impl AppState {
             Err(error) => {
                 self.processes_error = Some(map_error(&error, self.language));
                 self.operation_state = OperationState::Error;
+            }
+        }
+    }
+
+    pub fn show_port_lookup(&self) -> bool {
+        self.port_lookup.open
+    }
+
+    pub fn open_port_lookup(&mut self) {
+        self.port_lookup.open = true;
+        self.port_lookup.query = SearchText::default();
+        self.port_lookup.port = None;
+        self.port_lookup.loading = false;
+        self.port_lookup.error = None;
+        self.port_lookup.results.clear();
+        self.port_lookup.searched = false;
+    }
+
+    pub fn close_port_lookup(&mut self) {
+        self.port_lookup = PortLookupState::default();
+    }
+
+    pub fn port_lookup_query(&self) -> &str {
+        self.port_lookup.query.text.as_str()
+    }
+
+    pub fn port_lookup_query_marked(&self) -> &str {
+        self.port_lookup.query.marked.as_str()
+    }
+
+    pub fn port_lookup_query_utf16_len(&self) -> usize {
+        self.port_lookup.query.utf16_len()
+    }
+
+    pub fn port_lookup_query_marked_range(&self) -> Option<Range<usize>> {
+        self.port_lookup.query.marked_range()
+    }
+
+    pub fn port_lookup_query_text_range(&self, range: Range<usize>) -> String {
+        self.port_lookup.query.text_range(range)
+    }
+
+    pub fn port_lookup_query_replace_range(&mut self, range: Range<usize>, text: &str) {
+        self.port_lookup.query.replace_range(range, text);
+        self.port_lookup.error = None;
+    }
+
+    pub fn port_lookup_query_commit_text(&mut self, text: &str) {
+        self.port_lookup.query.commit(text);
+        self.port_lookup.error = None;
+    }
+
+    pub fn port_lookup_query_set_marked(&mut self, text: &str) {
+        self.port_lookup.query.set_marked(text);
+        self.port_lookup.error = None;
+    }
+
+    pub fn port_lookup_query_unmark(&mut self) {
+        self.port_lookup.query.unmark();
+        self.port_lookup.error = None;
+    }
+
+    pub fn port_lookup_query_backspace(&mut self) {
+        self.port_lookup.query.backspace();
+        self.port_lookup.error = None;
+    }
+
+    pub fn port_lookup_loading(&self) -> bool {
+        self.port_lookup.loading
+    }
+
+    pub fn port_lookup_error(&self) -> Option<&str> {
+        self.port_lookup.error.as_deref()
+    }
+
+    pub fn port_lookup_results(&self) -> &[PortEntry] {
+        &self.port_lookup.results
+    }
+
+    pub fn port_lookup_searched(&self) -> bool {
+        self.port_lookup.searched
+    }
+
+    /// The port currently shown in the lookup dialog, if a search has run.
+    pub fn port_lookup_port(&self) -> Option<u16> {
+        if self.port_lookup.open && self.port_lookup.searched {
+            self.port_lookup.port
+        } else {
+            None
+        }
+    }
+
+    /// Validate the entered port and start a lookup. Returns the port to query
+    /// when valid; on invalid input the dialog shows an error and returns
+    /// `None`.
+    pub fn begin_port_lookup(&mut self) -> Option<u16> {
+        let translations = self.t();
+        let raw = self.port_lookup.query.full_text();
+        let trimmed = raw.trim();
+        let port = match trimmed.parse::<u32>() {
+            Ok(value) if (1..=65535).contains(&value) => value as u16,
+            _ => {
+                self.port_lookup.error = Some(if trimmed.is_empty() {
+                    translations.proc_port_required.to_string()
+                } else {
+                    translations.proc_port_invalid.to_string()
+                });
+                self.port_lookup.loading = false;
+                self.port_lookup.searched = false;
+                self.port_lookup.results.clear();
+                return None;
+            }
+        };
+        self.port_lookup.error = None;
+        self.port_lookup.loading = true;
+        self.port_lookup.searched = true;
+        self.port_lookup.port = Some(port);
+        self.port_lookup.results.clear();
+        Some(port)
+    }
+
+    pub fn set_port_lookup(&mut self, result: Result<Vec<PortEntry>, BackendError>) {
+        self.port_lookup.loading = false;
+        match result {
+            Ok(entries) => {
+                self.port_lookup.results = entries;
+                self.port_lookup.error = None;
+            }
+            Err(error) => {
+                self.port_lookup.results.clear();
+                self.port_lookup.error = Some(map_error(&error, self.language));
             }
         }
     }
